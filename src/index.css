@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", sans-serif;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #0f172a;
+    color: #f8fafc;
+    overflow-x: hidden;
+  }
+}
+
+/* Custom ruby / furigana styling */
+ruby {
+  ruby-align: center;
+  ruby-position: over;
+}
+
+rt {
+  font-size: 0.65em;
+  color: #38bdf8;
+  font-weight: 500;
+  user-select: none;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* Pulse animation for voice speaking waves */
+@keyframes wave-pulse {
+  0%, 100% {
+    transform: scaleY(0.4);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.animate-wave-1 {
+  animation: wave-pulse 0.8s ease-in-out infinite alternate;
+}
+.animate-wave-2 {
+  animation: wave-pulse 0.7s ease-in-out infinite 0.15s alternate;
+}
+.animate-wave-3 {
+  animation: wave-pulse 0.9s ease-in-out infinite 0.3s alternate;
+}
+.animate-wave-4 {
+  animation: wave-pulse 0.75s ease-in-out infinite 0.2s alternate;
+}
+.animate-wave-5 {
+  animation: wave-pulse 0.85s ease-in-out infinite 0.4s alternate;
+}
