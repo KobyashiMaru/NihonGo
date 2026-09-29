@@ -4,9 +4,7 @@ import { soundEffects } from '../../services/soundEffects';
 import confetti from 'canvas-confetti';
 import { 
   Keyboard, 
-  Sparkles, 
   Volume2, 
-  CheckCircle, 
   RefreshCw, 
   Award,
   Layers,
@@ -24,12 +22,17 @@ export const JISKeyboardTrainer: React.FC<JISKeyboardTrainerProps> = ({ onEarnXP
   const [currentItemIdx, setCurrentItemIdx] = useState(0);
   const [userInput, setUserInput] = useState('');
   const [isCompleted, setIsCompleted] = useState(false);
-  const [accuracy, setAccuracy] = useState(100);
   const [streakCount, setStreakCount] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  // True while the macOS Japanese IME still shows underlined (unconfirmed) text
+  const isComposingRef = useRef(false);
+  // Set once the current item is solved so late input events cannot advance twice
+  const isAdvancingRef = useRef(false);
+  const advanceTimerRef = useRef<number | null>(null);
 
   const currentChallenge = TYPING_CHALLENGES[selectedChallengeIdx];
   const currentItem = currentChallenge.items[currentItemIdx] as any;
+  const isKanjiChallenge = Boolean(currentItem.targetKanji);
 
   // Focus input automatically
   useEffect(() => {
@@ -39,54 +42,70 @@ export const JISKeyboardTrainer: React.FC<JISKeyboardTrainerProps> = ({ onEarnXP
   // Audio pronunciation when new item loads
   useEffect(() => {
     if (currentItem && !isCompleted) {
-      speechService.speak(currentItem.kana || currentItem.prompt, { rate: 0.85 });
+      speechService.speak(currentItem.kana || currentItem.prompt);
     }
   }, [currentItemIdx, selectedChallengeIdx]);
+
+  const isCorrectAnswer = (raw: string) => {
+    const val = raw.trim();
+    // Kanji challenge: only the converted kanji counts (typing the kana alone skips the Space step)
+    if (isKanjiChallenge) return val === currentItem.targetKanji;
+    return (
+      val === currentItem.kana ||
+      val === currentItem.kanji || // macOS Live Conversion may already have turned it into kanji
+      val.toLowerCase() === currentItem.romaji?.toLowerCase()
+    );
+  };
+
+  const checkAnswer = (val: string) => {
+    if (isAdvancingRef.current || !isCorrectAnswer(val)) return;
+    isAdvancingRef.current = true;
+
+    soundEffects.playCorrect();
+    setStreakCount(prev => prev + 1);
+
+    if (currentItemIdx + 1 < currentChallenge.items.length) {
+      advanceTimerRef.current = window.setTimeout(() => {
+        setCurrentItemIdx(prev => prev + 1);
+        setUserInput('');
+        isAdvancingRef.current = false;
+      }, 280);
+    } else {
+      // Completed the challenge set!
+      setIsCompleted(true);
+      soundEffects.playVictory();
+      onEarnXP(50);
+      confetti({
+        particleCount: 80,
+        spread: 70,
+        origin: { y: 0.6 }
+      });
+    }
+  };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setUserInput(val);
     soundEffects.playKeyClick();
 
-    // Check matching condition
-    const target1 = currentItem.kana;
-    const target2 = currentItem.romaji;
-    const target3 = currentItem.targetKanji;
+    // While the IME is composing, the value is still underlined text the user has not
+    // confirmed yet. Wait for Return (compositionend) instead of advancing mid-composition.
+    if (isComposingRef.current || (e.nativeEvent as InputEvent).isComposing) return;
+    checkAnswer(val);
+  };
 
-    const isMatch = (
-      val.trim() === target1 ||
-      val.trim().toLowerCase() === target2?.toLowerCase() ||
-      (target3 && val.trim() === target3)
-    );
-
-    if (isMatch) {
-      soundEffects.playCorrect();
-      setStreakCount(prev => prev + 1);
-
-      if (currentItemIdx + 1 < currentChallenge.items.length) {
-        setTimeout(() => {
-          setCurrentItemIdx(prev => prev + 1);
-          setUserInput('');
-        }, 280);
-      } else {
-        // Completed the challenge set!
-        setIsCompleted(true);
-        soundEffects.playVictory();
-        onEarnXP(50);
-        confetti({
-          particleCount: 80,
-          spread: 70,
-          origin: { y: 0.6 }
-        });
-      }
-    }
+  const handleCompositionEnd = (e: React.CompositionEvent<HTMLInputElement>) => {
+    isComposingRef.current = false;
+    checkAnswer(e.currentTarget.value);
   };
 
   const handleReset = () => {
+    if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
     setCurrentItemIdx(0);
     setUserInput('');
     setIsCompleted(false);
     setStreakCount(0);
+    isAdvancingRef.current = false;
   };
 
   return (
@@ -148,7 +167,7 @@ export const JISKeyboardTrainer: React.FC<JISKeyboardTrainerProps> = ({ onEarnXP
             <div className="inline-flex items-center space-x-2 bg-slate-800/90 border border-slate-700 px-4 py-1.5 rounded-full text-xs font-semibold text-slate-300">
               <span>意義：{currentItem.prompt}</span>
               <button
-                onClick={() => speechService.speak(currentItem.kana || currentItem.targetKanji, { rate: 0.85 })}
+                onClick={() => speechService.speak(currentItem.kana || currentItem.targetKanji)}
                 className="hover:text-sky-400 transition-colors"
                 title="重聽發音"
               >
@@ -186,7 +205,9 @@ export const JISKeyboardTrainer: React.FC<JISKeyboardTrainerProps> = ({ onEarnXP
                 type="text"
                 value={userInput}
                 onChange={handleInputChange}
-                placeholder="在此輸入假名或羅馬字..."
+                onCompositionStart={() => { isComposingRef.current = true; }}
+                onCompositionEnd={handleCompositionEnd}
+                placeholder={isKanjiChallenge ? '按【かな】打拼音 → Space 選漢字 → Return' : '在此輸入假名或羅馬字...'}
                 className="w-full bg-slate-950 border-2 border-sky-500/50 focus:border-sky-400 rounded-2xl px-5 py-4 text-center text-2xl font-bold text-white tracking-widest outline-none shadow-inner transition-all placeholder:text-slate-600 placeholder:text-base placeholder:tracking-normal font-sans"
               />
             </div>
@@ -196,7 +217,11 @@ export const JISKeyboardTrainer: React.FC<JISKeyboardTrainerProps> = ({ onEarnXP
               <kbd className="bg-slate-800 text-sky-300 px-2 py-0.5 rounded text-[11px] font-mono border border-slate-700">
                 かな
               </kbd>
-              <span>打「{currentItem.romaji}」即會自動拼出假名！</span>
+              <span>
+                {isKanjiChallenge
+                  ? `打「${currentItem.romaji}」→ 按 Space 選「${currentItem.targetKanji}」→ 按 Return 確定`
+                  : `打「${currentItem.romaji}」拼出假名 → 按 Return 確定`}
+              </span>
             </div>
           </div>
         </div>
@@ -248,10 +273,10 @@ export const JISKeyboardTrainer: React.FC<JISKeyboardTrainerProps> = ({ onEarnXP
         </div>
 
         <div className="grid grid-cols-5 sm:grid-cols-10 gap-2">
-          {KANA_LIST.slice(0, 30).map((k, i) => (
+          {KANA_LIST.slice(0, KANA_LIST.findIndex(k => k.hiragana === 'ん') + 1).map((k, i) => (
             <button
               key={i}
-              onClick={() => speechService.speak(k.hiragana, { rate: 0.85 })}
+              onClick={() => speechService.speak(k.hiragana)}
               className="bg-slate-950/70 hover:bg-sky-950/50 hover:border-sky-500/50 border border-slate-800/80 rounded-xl p-2 text-center transition-all group"
             >
               <div className="text-base font-bold text-white group-hover:text-sky-300">{k.hiragana}</div>

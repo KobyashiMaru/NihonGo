@@ -5,6 +5,13 @@ class SoundEffectsService {
   private ringOscillator: OscillatorNode | null = null;
   private ringGain: GainNode | null = null;
   private ringInterval: number | null = null;
+  private enabled = true;
+
+  // Global mute switch (navbar speaker button)
+  setEnabled(enabled: boolean) {
+    this.enabled = enabled;
+    if (!enabled) this.stopIncomingRing();
+  }
 
   private getContext(): AudioContext {
     if (!this.ctx) {
@@ -19,6 +26,7 @@ class SoundEffectsService {
 
   // Play satisfying key click sound for typing
   playKeyClick() {
+    if (!this.enabled) return;
     try {
       const ctx = this.getContext();
       const osc = ctx.createOscillator();
@@ -43,6 +51,7 @@ class SoundEffectsService {
 
   // Play correct answer chime (cheerful ascending)
   playCorrect() {
+    if (!this.enabled) return;
     try {
       const ctx = this.getContext();
       const notes = [523.25, 659.25, 783.99, 1046.5]; // C5, E5, G5, C6
@@ -68,6 +77,7 @@ class SoundEffectsService {
 
   // Play wrong buzz (gentle warning)
   playWrong() {
+    if (!this.enabled) return;
     try {
       const ctx = this.getContext();
       const osc = ctx.createOscillator();
@@ -91,6 +101,7 @@ class SoundEffectsService {
   // Start realistic Japanese phone ringtone (two-tone alternating chirp)
   startIncomingRing() {
     this.stopIncomingRing();
+    if (!this.enabled) return;
     try {
       const ctx = this.getContext();
 
@@ -132,6 +143,7 @@ class SoundEffectsService {
   // Call connected pickup click
   playPickup() {
     this.stopIncomingRing();
+    if (!this.enabled) return;
     try {
       const ctx = this.getContext();
       const osc = ctx.createOscillator();
@@ -155,6 +167,7 @@ class SoundEffectsService {
   // Call ended / hangup beep
   playHangup() {
     this.stopIncomingRing();
+    if (!this.enabled) return;
     try {
       const ctx = this.getContext();
       const osc = ctx.createOscillator();
@@ -175,6 +188,7 @@ class SoundEffectsService {
 
   // Victory fanfare for leveling up or completing lesson
   playVictory() {
+    if (!this.enabled) return;
     try {
       const ctx = this.getContext();
       const notes = [440, 554.37, 659.25, 880, 1108.73, 1318.51];

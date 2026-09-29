@@ -1,10 +1,68 @@
 // Speech Service (Web Speech Synthesis TTS & Speech Recognition STT)
 
+// Convert ruby markup (<ruby>漢字<rt>かんじ</rt></ruby>) into its kana reading
+export const furiganaToKana = (furigana: string): string =>
+  furigana
+    .replace(/<ruby>.*?<rt>(.*?)<\/rt><\/ruby>/g, '$1')
+    .replace(/<[^>]+>/g, '');
+
+// Normalize Japanese text for fuzzy comparison: drop markup and punctuation,
+// fold full-width/half-width variants and treat katakana the same as hiragana
+const normalizeForCompare = (text: string): string =>
+  text
+    .replace(/<rt>.*?<\/rt>/g, '')
+    .replace(/<[^>]+>/g, '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[\s、。，．,.!?！？「」『』（）()〜～・…"'-]/g, '')
+    .replace(/[ァ-ヶ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0x60));
+
+const levenshteinSimilarity = (a: string, b: string): number => {
+  if (!a || !b) return 0;
+  const matrix: number[][] = [];
+  for (let i = 0; i <= a.length; i++) matrix[i] = [i];
+  for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
+
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,
+        matrix[i][j - 1] + 1,
+        matrix[i - 1][j - 1] + cost
+      );
+    }
+  }
+
+  return 1 - matrix[a.length][b.length] / Math.max(a.length, b.length);
+};
+
+// Human readable messages for SpeechRecognition error codes. `null` means "ignore".
+const describeRecognitionError = (code: string): string | null => {
+  switch (code) {
+    case 'aborted':
+      return null;
+    case 'not-allowed':
+    case 'service-not-allowed':
+      return '麥克風權限被拒絕：請點瀏覽器網址列左側的圖示，允許此網站使用麥克風。';
+    case 'no-speech':
+      return '沒有偵測到聲音，請靠近麥克風再試一次。';
+    case 'audio-capture':
+      return '找不到可用的麥克風裝置，請確認麥克風已連接。';
+    case 'network':
+      return '語音辨識需要網路連線（瀏覽器會把語音送到雲端辨識），請檢查網路後再試。';
+    case 'language-not-supported':
+      return '此瀏覽器不支援日語語音辨識，建議改用 Google Chrome。';
+    default:
+      return `語音辨識發生錯誤（${code}），請再試一次。`;
+  }
+};
+
 class SpeechService {
   private synth: SpeechSynthesis | null = null;
   private recognition: any = null;
-  private isListening: boolean = false;
   private voices: SpeechSynthesisVoice[] = [];
+  private defaultRate = 0.85;
 
   constructor() {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -28,6 +86,11 @@ class SpeechService {
       .replace(/<[^>]+>/g, '')        // Remove remaining HTML tags
       .replace(/[～〜]/g, '')          // Remove wave dashes
       .trim();
+  }
+
+  // Rate used when a caller does not pass one (driven by the user's settings)
+  setDefaultRate(rate: number): void {
+    this.defaultRate = rate;
   }
 
   // Speak Japanese text with natural voice and adjustable speed
@@ -58,7 +121,7 @@ class SpeechService {
 
     const utterance = new SpeechSynthesisUtterance(clean);
     utterance.lang = 'ja-JP';
-    utterance.rate = options?.rate ?? 0.85; // Default beginner friendly speed
+    utterance.rate = options?.rate ?? this.defaultRate;
     utterance.pitch = options?.pitch ?? 1.05;
 
     // Pick best Japanese voice (macOS Kyoko / Otoya or any ja-JP voice)
@@ -81,39 +144,44 @@ class SpeechService {
     }
   }
 
-  // Start microphone speech recognition
-  startListening(callbacks: {
-    onResult: (transcript: string, isFinal: boolean) => void;
-    onError?: (err: string) => void;
-    onEnd?: () => void;
-  }): boolean {
+  // Start microphone speech recognition.
+  // `continuous: true` keeps listening through pauses until stopListening() is called
+  // (used for push-to-talk); otherwise the browser stops after the first phrase.
+  startListening(
+    callbacks: {
+      onResult: (transcript: string, isFinal: boolean) => void;
+      onError?: (message: string) => void;
+      onEnd?: () => void;
+    },
+    options?: { continuous?: boolean }
+  ): boolean {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      callbacks.onError?.('您的瀏覽器不支援 Web Speech API。建議使用 Google Chrome、Edge 或 Safari。');
+      callbacks.onError?.('您的瀏覽器不支援 Web Speech API 語音辨識。建議使用 Google Chrome、Edge 或 Safari。');
       return false;
     }
 
+    // Detach the previous session so its late events cannot leak into this one
+    this.abortListening();
+
     try {
-      if (this.recognition) {
-        this.recognition.abort();
-      }
+      const recognition = new SpeechRecognition();
+      this.recognition = recognition;
+      recognition.lang = 'ja-JP';
+      recognition.interimResults = true;
+      recognition.continuous = options?.continuous ?? false;
+      recognition.maxAlternatives = 3;
 
-      this.recognition = new SpeechRecognition();
-      this.recognition.lang = 'ja-JP';
-      this.recognition.interimResults = true;
-      this.recognition.continuous = false;
-      this.recognition.maxAlternatives = 3;
+      const isCurrent = () => this.recognition === recognition;
 
-      this.recognition.onstart = () => {
-        this.isListening = true;
-      };
-
-      this.recognition.onresult = (event: any) => {
-        let interimTranscript = '';
+      recognition.onresult = (event: any) => {
+        if (!isCurrent()) return;
         let finalTranscript = '';
+        let interimTranscript = '';
 
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
+        // Rebuild the whole utterance so continuous sessions keep earlier phrases
+        for (let i = 0; i < event.results.length; ++i) {
           if (event.results[i].isFinal) {
             finalTranscript += event.results[i][0].transcript;
           } else {
@@ -121,75 +189,82 @@ class SpeechService {
           }
         }
 
-        const resultText = finalTranscript || interimTranscript;
-        callbacks.onResult(resultText, Boolean(finalTranscript));
+        callbacks.onResult(finalTranscript + interimTranscript, !interimTranscript && Boolean(finalTranscript));
       };
 
-      this.recognition.onerror = (event: any) => {
-        this.isListening = false;
-        callbacks.onError?.(event.error);
+      recognition.onerror = (event: any) => {
+        if (!isCurrent()) return;
+        const message = describeRecognitionError(event.error);
+        if (message) callbacks.onError?.(message);
       };
 
-      this.recognition.onend = () => {
-        this.isListening = false;
+      recognition.onend = () => {
+        if (!isCurrent()) return;
+        this.recognition = null;
         callbacks.onEnd?.();
       };
 
-      this.recognition.start();
+      recognition.start();
       return true;
     } catch (err: any) {
-      this.isListening = false;
+      this.recognition = null;
       callbacks.onError?.(err?.message || '無法啟動語音識別');
       return false;
     }
   }
 
+  // Gracefully stop: the browser delivers the final transcript, then fires onEnd.
+  // Safe to call before the session has actually started.
   stopListening(): void {
-    if (this.recognition && this.isListening) {
+    if (this.recognition) {
       try {
         this.recognition.stop();
       } catch {}
-      this.isListening = false;
     }
   }
 
-  // Calculate pronunciation similarity score (0 to 100)
-  scorePronunciation(target: string, spoken: string): { score: number; feedback: string } {
-    const cleanTarget = target.replace(/[\s、。！？!?,.]/g, '').toLowerCase();
-    const cleanSpoken = spoken.replace(/[\s、。！？!?,.]/g, '').toLowerCase();
+  // Hard cancel without firing any more callbacks (e.g. when leaving the screen)
+  abortListening(): void {
+    const recognition = this.recognition;
+    if (!recognition) return;
+    this.recognition = null;
+    recognition.onresult = null;
+    recognition.onerror = null;
+    recognition.onend = null;
+    try {
+      recognition.abort();
+    } catch {}
+  }
 
-    if (!cleanSpoken) {
-      return { score: 0, feedback: '未偵測到發音，請按住麥克風再試一次！' };
+  // How closely `spoken` matches the best of `targets` (0 to 100). Targets can be
+  // the kanji sentence and its kana reading, since recognizers return either.
+  matchScore(spoken: string, targets: string[]): number {
+    const cleanSpoken = normalizeForCompare(spoken);
+    if (!cleanSpoken) return 0;
+
+    let best = 0;
+    for (const target of targets) {
+      const cleanTarget = normalizeForCompare(target);
+      if (!cleanTarget) continue;
+      const similarity = cleanSpoken.includes(cleanTarget) ? 1 : levenshteinSimilarity(cleanTarget, cleanSpoken);
+      best = Math.max(best, similarity);
+    }
+    return Math.round(best * 100);
+  }
+
+  // Calculate pronunciation similarity score (0 to 100)
+  scorePronunciation(target: string, spoken: string, reading?: string): { score: number; feedback: string } {
+    if (!normalizeForCompare(spoken)) {
+      return { score: 0, feedback: '未偵測到發音，請按下麥克風再試一次！' };
     }
 
-    if (cleanTarget === cleanSpoken || cleanSpoken.includes(cleanTarget) || cleanTarget.includes(cleanSpoken)) {
+    const similarity = this.matchScore(spoken, reading ? [target, reading] : [target]);
+
+    if (similarity === 100) {
       return { score: 100, feedback: '發音非常標準！太厲害了 (完璧！)' };
     }
 
-    // Levenshtein distance calculation
-    const matrix: number[][] = [];
-    const len1 = cleanTarget.length;
-    const len2 = cleanSpoken.length;
-
-    for (let i = 0; i <= len1; i++) matrix[i] = [i];
-    for (let j = 0; j <= len2; j++) matrix[0][j] = j;
-
-    for (let i = 1; i <= len1; i++) {
-      for (let j = 1; j <= len2; j++) {
-        const cost = cleanTarget[i - 1] === cleanSpoken[j - 1] ? 0 : 1;
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j - 1] + cost
-        );
-      }
-    }
-
-    const dist = matrix[len1][len2];
-    const maxLen = Math.max(len1, len2);
-    const similarity = Math.max(0, Math.round((1 - dist / maxLen) * 100));
-
-    let feedback = '發音很接近了，加油！';
+    let feedback: string;
     if (similarity >= 80) {
       feedback = '發音很好！語調很自然！';
     } else if (similarity >= 60) {

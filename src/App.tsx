@@ -8,23 +8,37 @@ import { FourSkillsHub } from './components/skills/FourSkillsHub';
 import { RoadmapScreen } from './components/roadmap/RoadmapScreen';
 import { SettingsModal } from './components/settings/SettingsModal';
 import { loadUserProgress, saveUserProgress, addXP } from './services/storageService';
+import { soundEffects } from './services/soundEffects';
+import { speechService } from './services/speechService';
 import { UserProgress } from './types';
 
 export function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('mac-keyboard');
-  const [progress, setProgress] = useState<UserProgress>(loadUserProgress());
+  const [progress, setProgress] = useState<UserProgress>(loadUserProgress);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   // Sync progress changes to localStorage
+  useEffect(() => {
+    saveUserProgress(progress);
+  }, [progress]);
+
+  // Apply the user's preferred TTS speed everywhere
+  useEffect(() => {
+    speechService.setDefaultRate(progress.settings.speechRate);
+  }, [progress.settings.speechRate]);
+
+  useEffect(() => {
+    soundEffects.setEnabled(soundEnabled);
+  }, [soundEnabled]);
+
   const handleUpdateProgress = (updated: UserProgress) => {
     setProgress(updated);
-    saveUserProgress(updated);
   };
 
+  // Functional update so several rewards in a row are never lost
   const handleEarnXP = (amount: number) => {
-    const updated = addXP(progress, amount);
-    setProgress(updated);
+    setProgress(prev => addXP(prev, amount));
   };
 
   const handleToggleSound = () => {
@@ -61,7 +75,7 @@ export function App() {
           )}
 
           {currentTab === 'video-call' && (
-            <VideoCallScreen onEarnXP={handleEarnXP} />
+            <VideoCallScreen onEarnXP={handleEarnXP} settings={progress.settings} />
           )}
 
           {currentTab === 'four-skills' && (

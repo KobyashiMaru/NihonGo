@@ -89,7 +89,7 @@ export const CONVERSATION_SCENARIOS: CallScenario[] = [
           },
           {
             label: '沒錯，我剛開始學日文',
-            japanese: 'はい、台湾人です。日語の勉強を始めたばかりです！',
+            japanese: 'はい、台湾人です。日本語の勉強を始めたばかりです！',
             furigana: 'はい、<ruby>台湾人<rt>たいわんじん</rt></ruby>です。<ruby>日本語<rt>にほんご</rt></ruby>の<ruby>勉強<rt>べんきょう</rt></ruby>を<ruby>始<rt>はじ</rt></ruby>めたばかりです！',
             romaji: 'Hai, Taiwanjin desu. Nihongo no benkyou o hajimeta bakari desu!',
             meaning: '是的，我是台灣人。才剛剛開始學日語呢！',

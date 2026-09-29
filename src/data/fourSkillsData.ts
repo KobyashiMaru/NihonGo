@@ -77,7 +77,7 @@ export const LISTENING_EXERCISES: ListeningExercise[] = [
     category: '生活日常聽解',
     options: [
       { text: '郵票 (切手 / きって)', isCorrect: true, explanation: '答對了！「きって」中間有促音停頓半拍，代表郵票。' },
-      { text: '郵票 (来て / きて)', isCorrect: false, explanation: '「きて」沒有促音，意思是「請來」。' }
+      { text: '請來 (来て / きて)', isCorrect: false, explanation: '「きて」沒有促音，意思是「請來」。' }
     ]
   },
   {

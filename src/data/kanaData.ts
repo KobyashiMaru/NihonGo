@@ -121,7 +121,7 @@ export const TYPING_CHALLENGES = [
     title: '實用生活問候語打字',
     desc: '練習打出常用的問候語句，熟悉長句拼寫！',
     items: [
-      { prompt: '你好', kana: 'こんにちは', romaji: 'konnichiwa', kanji: 'こんにちは' },
+      { prompt: '你好', kana: 'こんにちは', romaji: 'konnichiha', kanji: 'こんにちは', tip: '「は」當助詞時讀作 wa，但鍵盤要打 ha，打 wa 會變成「こんにちわ」' },
       { prompt: '早安 (禮貌)', kana: 'おはようございます', romaji: 'ohayougozaimasu', kanji: 'おはようございます' },
       { prompt: '謝謝', kana: 'ありがとうございます', romaji: 'arigatougozaimasu', kanji: 'ありがとうございます' },
       { prompt: '不好意思 / 請問', kana: 'すみません', romaji: 'sumimasen', kanji: 'すみません' },

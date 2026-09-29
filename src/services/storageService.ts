@@ -52,11 +52,7 @@ export const saveUserProgress = (progress: UserProgress): void => {
   }
 };
 
-export const addXP = (current: UserProgress, amount: number): UserProgress => {
-  const updated = {
-    ...current,
-    xp: current.xp + amount,
-  };
-  saveUserProgress(updated);
-  return updated;
-};
+export const addXP = (current: UserProgress, amount: number): UserProgress => ({
+  ...current,
+  xp: current.xp + amount,
+});

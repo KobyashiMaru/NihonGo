@@ -1,36 +1,33 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { CONVERSATION_SCENARIOS } from '../../data/conversationScenarios';
-import { CallScenario, DialogueNode, ChatMessage } from '../../types';
+import { CallScenario, DialogueNode, ChatMessage, UserProgress } from '../../types';
 import { soundEffects } from '../../services/soundEffects';
-import { speechService } from '../../services/speechService';
+import { speechService, furiganaToKana } from '../../services/speechService';
 import confetti from 'canvas-confetti';
 import { 
   Phone, 
   PhoneOff, 
   Mic, 
-  MicOff, 
-  Volume2, 
   Camera, 
   CameraOff, 
   Sparkles, 
-  HelpCircle, 
-  CheckCircle2, 
-  Flame, 
   RotateCcw,
-  Languages,
-  BookOpen,
-  ArrowRight,
-  ShieldCheck,
-  UserCheck
+  BookOpen
 } from 'lucide-react';
 
 interface VideoCallScreenProps {
   onEarnXP: (amount: number) => void;
+  settings: UserProgress['settings'];
 }
 
 type CallState = 'scenario-select' | 'incoming' | 'in-call' | 'summary';
+type SuggestedResponse = DialogueNode['suggestedResponses'][number];
 
-export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP }) => {
+// Minimum similarity (0-100) for a spoken reply to count as one of the suggested answers
+const SPOKEN_MATCH_THRESHOLD = 60;
+const CALL_COMPLETE_BONUS_XP = 40;
+
+export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP, settings }) => {
   const [callState, setCallState] = useState<CallState>('scenario-select');
   const [selectedScenario, setSelectedScenario] = useState<CallScenario>(CONVERSATION_SCENARIOS[0]);
   const [currentNode, setCurrentNode] = useState<DialogueNode | null>(null);
@@ -40,50 +37,88 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP }) =>
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [recognizedText, setRecognizedText] = useState('');
+  const [micMessage, setMicMessage] = useState<string | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
-  const [speechRate, setSpeechRate] = useState<number>(0.8);
-  const [showFurigana, setShowFurigana] = useState(true);
-  const [showRomaji, setShowRomaji] = useState(true);
-  const [showTranslation, setShowTranslation] = useState(true);
+  const [speechRate, setSpeechRate] = useState<number>(settings.speechRate);
+  const [showFurigana, setShowFurigana] = useState(settings.showFurigana);
+  const [showRomaji, setShowRomaji] = useState(settings.showRomaji);
+  const [showTranslation, setShowTranslation] = useState(settings.showTranslation);
   const [showHints, setShowHints] = useState(true);
   const [callDuration, setCallDuration] = useState(0);
   const [earnedXP, setEarnedXP] = useState(0);
+  const [spokenScores, setSpokenScores] = useState<number[]>([]);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  const timerRef = useRef<number | null>(null);
+  const pendingTimeoutsRef = useRef<number[]>([]);
+  // Mirrors earnedXP so delayed callbacks never read a stale total
+  const earnedXPRef = useRef(0);
+  // True while a reply is being processed, so double clicks / late speech cannot skip a turn
+  const isAdvancingRef = useRef(false);
+  // Push-to-talk: idle → holding (mic open) → finishing (waiting for the final transcript)
+  const pttStateRef = useRef<'idle' | 'holding' | 'finishing'>('idle');
+  const transcriptRef = useRef('');
 
-  // Clean up audio & camera on unmount
+  // setTimeout that is cancelled automatically when the call ends
+  const schedule = (fn: () => void, delay: number) => {
+    const id = window.setTimeout(() => {
+      pendingTimeoutsRef.current = pendingTimeoutsRef.current.filter(t => t !== id);
+      fn();
+    }, delay);
+    pendingTimeoutsRef.current.push(id);
+  };
+
+  const clearPendingTimeouts = () => {
+    pendingTimeoutsRef.current.forEach(id => clearTimeout(id));
+    pendingTimeoutsRef.current = [];
+  };
+
+  // Clean up audio, mic & camera on unmount
   useEffect(() => {
+    const pendingTimeouts = pendingTimeoutsRef;
+    const mediaStream = mediaStreamRef;
     return () => {
       soundEffects.stopIncomingRing();
       speechService.stopSpeaking();
-      speechService.stopListening();
-      stopCamera();
-      if (timerRef.current) clearInterval(timerRef.current);
+      speechService.abortListening();
+      pendingTimeouts.current.forEach(id => clearTimeout(id));
+      mediaStream.current?.getTracks().forEach(track => track.stop());
     };
   }, []);
 
   // Timer for call duration
   useEffect(() => {
-    if (callState === 'in-call') {
-      timerRef.current = window.setInterval(() => {
-        setCallDuration(prev => prev + 1);
-      }, 1000);
-    } else {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
-    }
+    if (callState !== 'in-call') return;
+    const timer = window.setInterval(() => {
+      setCallDuration(prev => prev + 1);
+    }, 1000);
+    return () => clearInterval(timer);
   }, [callState]);
+
+  // The <video> element only mounts once cameraActive is true, so attach the stream afterwards
+  useEffect(() => {
+    if (cameraActive && videoRef.current) {
+      videoRef.current.srcObject = mediaStreamRef.current;
+    }
+  }, [cameraActive]);
+
+  const resetCallProgress = () => {
+    clearPendingTimeouts();
+    earnedXPRef.current = 0;
+    isAdvancingRef.current = false;
+    pttStateRef.current = 'idle';
+    setCallDuration(0);
+    setEarnedXP(0);
+    setSpokenScores([]);
+    setRecognizedText('');
+    setMicMessage(null);
+  };
 
   // Handle incoming call ringtone
   const startCallFlow = (scenario: CallScenario) => {
     setSelectedScenario(scenario);
     setCallState('incoming');
-    setCallDuration(0);
-    setEarnedXP(0);
+    resetCallProgress();
     soundEffects.startIncomingRing();
   };
 
@@ -111,15 +146,19 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP }) =>
   };
 
   const declineOrHangUp = () => {
+    clearPendingTimeouts();
     soundEffects.playHangup();
     speechService.stopSpeaking();
-    speechService.stopListening();
+    speechService.abortListening();
+    pttStateRef.current = 'idle';
+    setIsListening(false);
+    setIsSpeaking(false);
     stopCamera();
 
     if (callState === 'in-call') {
       setCallState('summary');
       soundEffects.playVictory();
-      onEarnXP(earnedXP + 40);
+      onEarnXP(earnedXPRef.current + CALL_COMPLETE_BONUS_XP);
       confetti({
         particleCount: 100,
         spread: 80,
@@ -130,20 +169,28 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP }) =>
     }
   };
 
-  const speakTutorText = (text: string) => {
+  const speakTutorText = (text: string, rate: number = speechRate) => {
     setIsSpeaking(true);
     speechService.speak(text, {
-      rate: speechRate,
+      rate,
       onStart: () => setIsSpeaking(true),
       onEnd: () => setIsSpeaking(false),
       onError: () => setIsSpeaking(false)
     });
   };
 
-  // User chooses a suggested response
-  const handleUserSelectResponse = (resp: any) => {
+  // User answers with one of the suggested responses (clicked or spoken)
+  const handleUserSelectResponse = (resp: SuggestedResponse, spokenScore?: number) => {
+    if (isAdvancingRef.current) return;
+    isAdvancingRef.current = true;
+
     soundEffects.playCorrect();
-    setEarnedXP(prev => prev + resp.xp);
+    earnedXPRef.current += resp.xp;
+    setEarnedXP(earnedXPRef.current);
+    if (spokenScore !== undefined) {
+      setSpokenScores(prev => [...prev, spokenScore]);
+    }
+    setMicMessage(null);
 
     // Add user message
     const userMsg: ChatMessage = {
@@ -153,37 +200,41 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP }) =>
       furigana: resp.furigana,
       romaji: resp.romaji,
       translation: resp.meaning,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      score: spokenScore
     };
 
     setMessages(prev => [...prev, userMsg]);
 
     // Check if next node is call complete
     if (resp.nextNodeId === 'call_complete') {
-      setTimeout(() => {
-        declineOrHangUp();
-      }, 1500);
+      schedule(declineOrHangUp, 1500);
       return;
     }
 
     // Advance tutor to next node
     const nextNode = selectedScenario.nodes[resp.nextNodeId];
-    if (nextNode) {
-      setCurrentNode(nextNode);
-      setTimeout(() => {
-        const tutorMsg: ChatMessage = {
-          id: `tut-${Date.now()}`,
-          sender: 'tutor',
-          japanese: nextNode.tutorSpeech,
-          furigana: nextNode.tutorFurigana,
-          romaji: nextNode.tutorRomaji,
-          translation: nextNode.tutorTranslation,
-          timestamp: Date.now()
-        };
-        setMessages(prev => [...prev, tutorMsg]);
-        speakTutorText(nextNode.tutorSpeech);
-      }, 800);
+    if (!nextNode) {
+      isAdvancingRef.current = false;
+      return;
     }
+
+    setCurrentNode(nextNode);
+    schedule(() => {
+      const tutorMsg: ChatMessage = {
+        id: `tut-${Date.now()}`,
+        sender: 'tutor',
+        japanese: nextNode.tutorSpeech,
+        furigana: nextNode.tutorFurigana,
+        romaji: nextNode.tutorRomaji,
+        translation: nextNode.tutorTranslation,
+        timestamp: Date.now()
+      };
+      setMessages(prev => [...prev, tutorMsg]);
+      setRecognizedText('');
+      speakTutorText(nextNode.tutorSpeech);
+      isAdvancingRef.current = false;
+    }, 800);
   };
 
   // Toggle user camera
@@ -194,9 +245,6 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP }) =>
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         mediaStreamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-        }
         setCameraActive(true);
       } catch {
         alert('無法啟用相機鏡頭（可能是權限被拒絕）。您仍可以繼續語音視訊通話！');
@@ -204,7 +252,7 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP }) =>
     }
   };
 
-  const stopCamera = () => {
+  function stopCamera() {
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach(track => track.stop());
       mediaStreamRef.current = null;
@@ -213,37 +261,121 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP }) =>
       videoRef.current.srcObject = null;
     }
     setCameraActive(false);
-  };
+  }
 
-  // Microphone speech recognition
-  const toggleListening = () => {
-    if (isListening) {
-      speechService.stopListening();
-      setIsListening(false);
+  // Pick the suggested response closest to what the user said
+  const evaluateSpokenReply = (node: DialogueNode, text: string) => {
+    if (!text.trim()) {
+      setMicMessage('沒有聽到你的聲音：請「按住」按鈕不放，說完整句後再放開。');
+      return;
+    }
+
+    let best: SuggestedResponse | null = null;
+    let bestScore = 0;
+    for (const resp of node.suggestedResponses) {
+      const score = speechService.matchScore(text, [resp.japanese, furiganaToKana(resp.furigana)]);
+      if (score > bestScore) {
+        best = resp;
+        bestScore = score;
+      }
+    }
+
+    if (best && bestScore >= SPOKEN_MATCH_THRESHOLD) {
+      handleUserSelectResponse(best, bestScore);
     } else {
-      setRecognizedText('');
-      const ok = speechService.startListening({
-        onResult: (text, isFinal) => {
-          setRecognizedText(text);
-          if (isFinal && currentNode) {
-            // Find closest response
-            setIsListening(false);
-            const matched = currentNode.suggestedResponses[0];
-            handleUserSelectResponse(matched);
-          }
-        },
-        onError: () => setIsListening(false),
-        onEnd: () => setIsListening(false)
-      });
-      setIsListening(ok);
+      soundEffects.playWrong();
+      setMicMessage('和提示中的回答差距有點大，再說一次看看，或參考下方的救急錦囊！');
     }
   };
+
+  // Push-to-talk: the mic stays open while the button (or Space) is held down
+  const startTalking = () => {
+    if (pttStateRef.current !== 'idle' || isAdvancingRef.current || !currentNode) return;
+    const node = currentNode;
+    let failed = false;
+
+    // Stop Sakura mid-sentence so her voice is not picked up by the microphone
+    speechService.stopSpeaking();
+    setIsSpeaking(false);
+    transcriptRef.current = '';
+    setRecognizedText('');
+    setMicMessage(null);
+
+    const ok = speechService.startListening(
+      {
+        onResult: (text) => {
+          transcriptRef.current = text;
+          setRecognizedText(text);
+        },
+        onError: (message) => {
+          failed = true;
+          setMicMessage(message);
+        },
+        onEnd: () => {
+          pttStateRef.current = 'idle';
+          setIsListening(false);
+          if (!failed) evaluateSpokenReply(node, transcriptRef.current);
+        }
+      },
+      { continuous: true }
+    );
+
+    pttStateRef.current = ok ? 'holding' : 'idle';
+    setIsListening(ok);
+  };
+
+  const stopTalking = () => {
+    if (pttStateRef.current !== 'holding') return;
+    pttStateRef.current = 'finishing';
+    // The final transcript arrives asynchronously, then onEnd evaluates it
+    speechService.stopListening();
+  };
+
+  // Holding the Space bar works as push-to-talk too
+  const pttHandlersRef = useRef({ start: startTalking, stop: stopTalking });
+  useEffect(() => {
+    pttHandlersRef.current = { start: startTalking, stop: stopTalking };
+  });
+
+  useEffect(() => {
+    if (callState !== 'in-call') return;
+
+    const isTypingTarget = (target: EventTarget | null) =>
+      target instanceof HTMLElement &&
+      (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || isTypingTarget(e.target)) return;
+      e.preventDefault();
+      if (!e.repeat) pttHandlersRef.current.start();
+    };
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || isTypingTarget(e.target)) return;
+      e.preventDefault();
+      pttHandlersRef.current.stop();
+    };
+    // Releasing the key in another window never fires keyup here
+    const handleBlur = () => pttHandlersRef.current.stop();
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleBlur);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleBlur);
+    };
+  }, [callState]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
+
+  const averageSpokenScore = spokenScores.length
+    ? Math.round(spokenScores.reduce((sum, s) => sum + s, 0) / spokenScores.length)
+    : null;
 
   // SCENARIO SELECTOR VIEW
   if (callState === 'scenario-select') {
@@ -556,13 +688,13 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP }) =>
                   <span>•</span>
                   <button
                     onClick={() => {
-                      const next = speechRate === 0.8 ? 1.0 : 0.8;
+                      const next = speechRate < 1 ? 1.0 : 0.8;
                       setSpeechRate(next);
-                      speakTutorText(currentNode.tutorSpeech);
+                      speakTutorText(currentNode.tutorSpeech, next);
                     }}
                     className="hover:text-rose-400 transition-colors"
                   >
-                    語速: {speechRate === 0.8 ? '慢速 (0.8x)' : '標準 (1.0x)'}
+                    語速: {speechRate < 1 ? `慢速 (${speechRate}x)` : `標準 (${speechRate}x)`}
                   </button>
                 </div>
               </div>
@@ -571,6 +703,23 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP }) =>
 
           {/* Bottom Floating Control Bar */}
           <div className="bg-slate-900/95 backdrop-blur-md border-t border-slate-800 p-4">
+            {/* Live transcript & mic feedback */}
+            <div className="max-w-xl mx-auto mb-3 min-h-[2.5rem] text-center space-y-1" aria-live="polite">
+              {isListening || recognizedText ? (
+                <div className="text-sm text-white">
+                  <span className="text-xs text-slate-400 mr-1">你說：</span>
+                  {recognizedText || <span className="text-slate-500">（正在聆聽…）</span>}
+                </div>
+              ) : (
+                !micMessage && (
+                  <div className="text-xs text-slate-500">
+                    按住「按住說話」按鈕（或空白鍵）開口說日語，說完再放開。
+                  </div>
+                )
+              )}
+              {micMessage && <div className="text-xs text-amber-300">{micMessage}</div>}
+            </div>
+
             <div className="max-w-xl mx-auto flex items-center justify-between">
               {/* Hint Cheat-Sheet Button */}
               <button
@@ -585,17 +734,28 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP }) =>
                 <span>救急錦囊 (回話提示)</span>
               </button>
 
-              {/* Mic Speaking Action */}
+              {/* Mic Speaking Action (push-to-talk: hold to record, release to send) */}
               <button
-                onClick={toggleListening}
-                className={`px-6 py-3 rounded-2xl font-bold text-sm shadow-xl flex items-center space-x-2 transition-all transform active:scale-95 ${
+                type="button"
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return;
+                  e.preventDefault();
+                  // Keep receiving pointerup even if the finger/cursor slides off the button
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  startTalking();
+                }}
+                onPointerUp={stopTalking}
+                onPointerCancel={stopTalking}
+                onLostPointerCapture={stopTalking}
+                onContextMenu={(e) => e.preventDefault()}
+                className={`select-none touch-none px-6 py-3 rounded-2xl font-bold text-sm shadow-xl flex items-center space-x-2 transition-all transform active:scale-95 ${
                   isListening
-                    ? 'bg-rose-500 text-white animate-pulse shadow-rose-500/40'
+                    ? 'bg-rose-500 text-white animate-pulse shadow-rose-500/40 scale-95'
                     : 'bg-emerald-500 hover:bg-emerald-400 text-slate-950 shadow-emerald-500/30'
                 }`}
               >
-                {isListening ? <Mic className="w-5 h-5 animate-bounce" /> : <Mic className="w-5 h-5" />}
-                <span>{isListening ? '聆聽中... (請說日語)' : '按住說話'}</span>
+                <Mic className={`w-5 h-5 ${isListening ? 'animate-bounce' : ''}`} />
+                <span>{isListening ? '聆聽中…放開送出' : '按住說話'}</span>
               </button>
 
               {/* Hangup */}
@@ -616,7 +776,7 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP }) =>
             <div className="flex items-center justify-between">
               <div className="text-xs font-bold text-amber-400 flex items-center space-x-1.5 uppercase tracking-wider">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>初學者救急錦囊：你可以這樣回答 Sakura（點擊發音或說給她聽）：</span>
+                <span>初學者救急錦囊：你可以這樣回答 Sakura（點擊選項，或按住麥克風唸給她聽）：</span>
               </div>
               <span className="text-[11px] text-slate-500 font-mono">點擊任一選項即可練習回答</span>
             </div>
@@ -625,7 +785,9 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP }) =>
               {currentNode.suggestedResponses.map((resp, idx) => (
                 <button
                   key={idx}
-                  onClick={() => handleUserSelectResponse(resp)}
+                  onClick={() => {
+                    if (pttStateRef.current === 'idle') handleUserSelectResponse(resp);
+                  }}
                   className="bg-slate-950/70 hover:bg-rose-950/40 border border-slate-800 hover:border-rose-500/60 rounded-2xl p-4 text-left transition-all group space-y-1.5 shadow-sm"
                 >
                   <div className="flex justify-between items-start">
@@ -682,11 +844,16 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP }) =>
           </div>
           <div>
             <div className="text-xs text-slate-500">獲得經驗值</div>
-            <div className="text-lg font-bold text-amber-400 mt-1">+{earnedXP + 40} XP</div>
+            <div className="text-lg font-bold text-amber-400 mt-1">+{earnedXP + CALL_COMPLETE_BONUS_XP} XP</div>
           </div>
           <div>
-            <div className="text-xs text-slate-500">流暢度評分</div>
-            <div className="text-lg font-bold text-emerald-400 mt-1">96 分 (A+)</div>
+            <div className="text-xs text-slate-500">口說相似度</div>
+            <div className="text-lg font-bold text-emerald-400 mt-1">
+              {averageSpokenScore !== null ? `${averageSpokenScore} 分` : '—'}
+            </div>
+            {averageSpokenScore === null && (
+              <div className="text-[10px] text-slate-500 mt-0.5">本次未使用語音回答</div>
+            )}
           </div>
         </div>
 

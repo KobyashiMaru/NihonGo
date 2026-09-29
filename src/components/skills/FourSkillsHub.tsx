@@ -1,15 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { 
   LISTENING_EXERCISES, 
   SPEAKING_EXERCISES, 
   READING_ARTICLES, 
-  WRITING_EXERCISES,
-  ListeningExercise,
-  SpeakingExercise,
-  ReadingArticle,
-  WritingExercise
+  WRITING_EXERCISES
 } from '../../data/fourSkillsData';
-import { speechService } from '../../services/speechService';
+import { speechService, furiganaToKana } from '../../services/speechService';
 import { soundEffects } from '../../services/soundEffects';
 import confetti from 'canvas-confetti';
 import { 
@@ -20,11 +16,8 @@ import {
   Volume2, 
   CheckCircle2, 
   XCircle, 
-  Sparkles, 
   ArrowRight,
-  RotateCcw,
-  Languages,
-  Award
+  RotateCcw
 } from 'lucide-react';
 
 interface FourSkillsHubProps {
@@ -35,6 +28,14 @@ type SkillTab = 'listening' | 'speaking' | 'reading' | 'writing';
 
 export const FourSkillsHub: React.FC<FourSkillsHubProps> = ({ onEarnXP }) => {
   const [activeTab, setActiveTab] = useState<SkillTab>('listening');
+
+  // Each exercise pays XP only once per session (re-clicking a right answer used to farm XP)
+  const rewardedRef = useRef(new Set<string>());
+  const rewardOnce = (key: string, amount: number) => {
+    if (rewardedRef.current.has(key)) return;
+    rewardedRef.current.add(key);
+    onEarnXP(amount);
+  };
 
   // LISTENING STATE
   const [listenIdx, setListenIdx] = useState(0);
@@ -62,13 +63,16 @@ export const FourSkillsHub: React.FC<FourSkillsHubProps> = ({ onEarnXP }) => {
   // --- LISTENING HANDLERS ---
   const currentListen = LISTENING_EXERCISES[listenIdx];
 
+  const listenSolved = selectedOptionIdx !== null && currentListen.options[selectedOptionIdx].isCorrect;
+
   const handleListenOption = (optIdx: number) => {
+    if (listenSolved) return;
     setSelectedOptionIdx(optIdx);
     const opt = currentListen.options[optIdx];
     if (opt.isCorrect) {
       soundEffects.playCorrect();
       setListenFeedback(opt.explanation);
-      onEarnXP(25);
+      rewardOnce(`listen-${currentListen.id}`, 25);
     } else {
       soundEffects.playWrong();
       setListenFeedback(opt.explanation);
@@ -97,20 +101,24 @@ export const FourSkillsHub: React.FC<FourSkillsHubProps> = ({ onEarnXP }) => {
           setSpokenTranscript(text);
           if (isFinal) {
             setIsRecording(false);
-            const res = speechService.scorePronunciation(currentSpeak.targetJapanese, text);
+            const res = speechService.scorePronunciation(
+              currentSpeak.targetJapanese,
+              text,
+              furiganaToKana(currentSpeak.furigana)
+            );
             setPronounceScore(res.score);
             setScoreFeedback(res.feedback);
             if (res.score >= 70) {
               soundEffects.playCorrect();
-              onEarnXP(currentSpeak.points);
+              rewardOnce(`speak-${currentSpeak.id}`, currentSpeak.points);
             } else {
               soundEffects.playWrong();
             }
           }
         },
-        onError: (err) => {
+        onError: (message) => {
           setIsRecording(false);
-          setScoreFeedback('麥克風未偵測到聲音，請再試一次。');
+          setScoreFeedback(message);
         },
         onEnd: () => setIsRecording(false)
       });
@@ -122,11 +130,13 @@ export const FourSkillsHub: React.FC<FourSkillsHubProps> = ({ onEarnXP }) => {
   const currentArticle = READING_ARTICLES[readIdx];
 
   const handleQuizSelect = (qIdx: number, aIdx: number) => {
+    const question = currentArticle.comprehensionQuestions[qIdx];
+    if (quizAnswers[qIdx] === question.correctIndex) return; // already solved
     setQuizAnswers(prev => ({ ...prev, [qIdx]: aIdx }));
-    const isRight = currentArticle.comprehensionQuestions[qIdx].correctIndex === aIdx;
+    const isRight = question.correctIndex === aIdx;
     if (isRight) {
       soundEffects.playCorrect();
-      onEarnXP(15);
+      rewardOnce(`read-${currentArticle.id}-${qIdx}`, 15);
     } else {
       soundEffects.playWrong();
     }
@@ -146,12 +156,17 @@ export const FourSkillsHub: React.FC<FourSkillsHubProps> = ({ onEarnXP }) => {
     soundEffects.playKeyClick();
   };
 
+  const nextArticle = () => {
+    setReadIdx(prev => (prev + 1) % READING_ARTICLES.length);
+    setQuizAnswers({});
+  };
+
   const handleCheckWriting = () => {
     const full = constructedWords.join('');
     setWriteSubmitted(true);
     if (full === currentWrite.targetJapanese) {
       soundEffects.playCorrect();
-      onEarnXP(30);
+      rewardOnce(`write-${currentWrite.id}`, 30);
       confetti({ particleCount: 50, spread: 60 });
     } else {
       soundEffects.playWrong();
@@ -242,7 +257,7 @@ export const FourSkillsHub: React.FC<FourSkillsHubProps> = ({ onEarnXP }) => {
             
             {/* Play Sound Button */}
             <button
-              onClick={() => speechService.speak(currentListen.japaneseVoice, { rate: 0.85 })}
+              onClick={() => speechService.speak(currentListen.japaneseVoice)}
               className="inline-flex items-center space-x-3 bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-400 hover:to-indigo-500 text-slate-950 font-black px-8 py-5 rounded-3xl shadow-xl shadow-purple-500/30 transition-transform active:scale-95 text-lg"
             >
               <Volume2 className="w-7 h-7" />
@@ -258,6 +273,7 @@ export const FourSkillsHub: React.FC<FourSkillsHubProps> = ({ onEarnXP }) => {
               return (
                 <button
                   key={idx}
+                  disabled={listenSolved && !isSelected}
                   onClick={() => handleListenOption(idx)}
                   className={`p-5 rounded-2xl border text-left transition-all font-medium text-sm flex items-center justify-between ${
                     isSelected
@@ -311,7 +327,7 @@ export const FourSkillsHub: React.FC<FourSkillsHubProps> = ({ onEarnXP }) => {
             {/* Model Audio */}
             <div className="pt-2">
               <button
-                onClick={() => speechService.speak(currentSpeak.targetJapanese, { rate: 0.85 })}
+                onClick={() => speechService.speak(currentSpeak.targetJapanese)}
                 className="inline-flex items-center space-x-2 bg-slate-800 hover:bg-slate-700 text-slate-200 px-4 py-2 rounded-xl text-xs font-semibold border border-slate-700 transition-colors"
               >
                 <Volume2 className="w-4 h-4 text-purple-400" />
@@ -377,7 +393,16 @@ export const FourSkillsHub: React.FC<FourSkillsHubProps> = ({ onEarnXP }) => {
               <h3 className="text-xl font-bold text-white mt-2">{currentArticle.title}</h3>
             </div>
 
-            <div className="flex space-x-2">
+            <div className="flex flex-wrap gap-2">
+              {READING_ARTICLES.length > 1 && (
+                <button
+                  onClick={nextArticle}
+                  className="text-xs px-3 py-1.5 rounded-xl border font-bold transition-colors bg-slate-800 text-slate-300 border-slate-700 hover:text-white flex items-center space-x-1"
+                >
+                  <span>下一篇 ({readIdx + 1}/{READING_ARTICLES.length})</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              )}
               <button
                 onClick={() => setShowFurigana(prev => !prev)}
                 className={`text-xs px-3 py-1.5 rounded-xl border font-bold transition-colors ${
@@ -409,7 +434,7 @@ export const FourSkillsHub: React.FC<FourSkillsHubProps> = ({ onEarnXP }) => {
                     }}
                   />
                   <button
-                    onClick={() => speechService.speak(line.japanese, { rate: 0.85 })}
+                    onClick={() => speechService.speak(line.japanese)}
                     className="p-1 text-slate-500 hover:text-purple-400 transition-colors ml-2 mt-1"
                     title="朗讀本句"
                   >
@@ -526,7 +551,8 @@ export const FourSkillsHub: React.FC<FourSkillsHubProps> = ({ onEarnXP }) => {
             </button>
             <button
               onClick={handleCheckWriting}
-              className="bg-purple-500 hover:bg-purple-400 text-slate-950 font-bold px-8 py-2.5 rounded-xl text-xs transition-colors shadow-lg shadow-purple-500/25 flex items-center space-x-1.5"
+              disabled={writeSubmitted || constructedWords.length === 0}
+              className="disabled:opacity-50 disabled:cursor-not-allowed bg-purple-500 hover:bg-purple-400 text-slate-950 font-bold px-8 py-2.5 rounded-xl text-xs transition-colors shadow-lg shadow-purple-500/25 flex items-center space-x-1.5"
             >
               <CheckCircle2 className="w-4 h-4" />
               <span>送出檢查 (+30 XP)</span>

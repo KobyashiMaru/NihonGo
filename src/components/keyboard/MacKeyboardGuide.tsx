@@ -3,6 +3,7 @@ import {
   MAC_JIS_SPECIAL_KEYS, 
   MACOS_SETUP_STEPS, 
   MAC_KEYBOARD_LAYOUT_ROWS,
+  MAC_IME_SHORTCUTS,
   MacKeyGuideItem 
 } from '../../data/macKeyboardGuideData';
 import { 
@@ -13,7 +14,6 @@ import {
   Zap, 
   HelpCircle,
   ArrowRight,
-  ExternalLink,
   Laptop
 } from 'lucide-react';
 import { soundEffects } from '../../services/soundEffects';
@@ -21,6 +21,23 @@ import { soundEffects } from '../../services/soundEffects';
 interface MacKeyboardGuideProps {
   onGoToTrainer: () => void;
 }
+
+// Physical key (KeyboardEvent.code / key) → guide card id + status text
+const detectSpecialKey = (e: KeyboardEvent): { id: string; label: string } | null => {
+  if (e.code === 'Lang2' || e.key === 'Eisu' || e.code === 'NonConvert') {
+    return { id: 'eisu', label: '英数 (Eisu) - 切換成英文輸入！' };
+  }
+  if (e.code === 'Lang1' || e.key === 'KanaMode' || e.code === 'KanaMode') {
+    return { id: 'kana', label: 'かな (Kana) - 切換成日文輸入！' };
+  }
+  if (e.code === 'Space') return { id: 'space_kanji', label: 'Space - 漢字變換！' };
+  if (e.code === 'Enter' || e.code === 'NumpadEnter') return { id: 'return_enter', label: 'Return - 確定輸入！' };
+  if (e.code === 'BracketLeft') return { id: 'at_key', label: '@ 鍵 - 免按 Shift！' };
+  if (e.code === 'Quote') return { id: 'colon_key', label: ': (冒號鍵) - 免按 Shift！' };
+  if (e.code === 'IntlYen') return { id: 'yen_key', label: '¥ (日圓符號鍵)！' };
+  if (e.code === 'ControlLeft') return { id: 'control_key', label: 'control (A 鍵左側)！' };
+  return null;
+};
 
 export const MacKeyboardGuide: React.FC<MacKeyboardGuideProps> = ({ onGoToTrainer }) => {
   const [activeTab, setActiveTab] = useState<'visual' | 'setup' | 'shortcuts'>('visual');
@@ -39,30 +56,11 @@ export const MacKeyboardGuide: React.FC<MacKeyboardGuideProps> = ({ onGoToTraine
       soundEffects.playKeyClick();
 
       // Detect special keys
-      if (e.code === 'Lang2' || e.key === 'Eisu' || e.code === 'NonConvert') {
-        setSelectedKey(MAC_JIS_SPECIAL_KEYS[0]);
-        setLastKeyPressedName('英数 (Eisu) - 進入英文輸入模式！');
-      } else if (e.code === 'Lang1' || e.key === 'Kana' || e.code === 'KanaMode') {
-        setSelectedKey(MAC_JIS_SPECIAL_KEYS[1]);
-        setLastKeyPressedName('かな (Kana) - 進入日文平假名模式！');
-      } else if (e.code === 'Space') {
-        setSelectedKey(MAC_JIS_SPECIAL_KEYS[2]);
-        setLastKeyPressedName('Space - 漢字變換！');
-      } else if (e.code === 'Enter' || e.code === 'NumpadEnter') {
-        setSelectedKey(MAC_JIS_SPECIAL_KEYS[3]);
-        setLastKeyPressedName('Return - 確定輸入！');
-      } else if (e.code === 'BracketLeft') {
-        setSelectedKey(MAC_JIS_SPECIAL_KEYS[4]);
-        setLastKeyPressedName('@ (艾特鍵) - 免按 Shift！');
-      } else if (e.code === 'Quote') {
-        setSelectedKey(MAC_JIS_SPECIAL_KEYS[5]);
-        setLastKeyPressedName(': (冒號鍵) - 免按 Shift！');
-      } else if (e.code === 'IntlYen') {
-        setSelectedKey(MAC_JIS_SPECIAL_KEYS[6]);
-        setLastKeyPressedName('¥ (日圓符號鍵)！');
-      } else if (e.code === 'ControlLeft') {
-        setSelectedKey(MAC_JIS_SPECIAL_KEYS[7]);
-        setLastKeyPressedName('Control (位於 A 左側的人體工學神位)！');
+      const special = detectSpecialKey(e);
+      const found = special && MAC_JIS_SPECIAL_KEYS.find(k => k.id === special.id);
+      if (special && found) {
+        setSelectedKey(found);
+        setLastKeyPressedName(special.label);
       } else {
         setLastKeyPressedName(`按鍵: ${e.key} (${e.code})`);
       }
@@ -101,8 +99,8 @@ export const MacKeyboardGuide: React.FC<MacKeyboardGuideProps> = ({ onGoToTraine
               圖解你的日式鍵盤：<span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-teal-300">零基礎秒懂神級用法</span>
             </h1>
             <p className="text-slate-300 text-sm sm:text-base max-w-2xl leading-relaxed">
-              恭喜你收到日式鍵盤！這把鍵盤是全世界輸入日語與英文效率最高的設計之一。
-              空白鍵兩側的 <span className="text-emerald-400 font-bold bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-800">英数</span> 與 <span className="text-teal-400 font-bold bg-teal-950/80 px-1.5 py-0.5 rounded border border-teal-800">かな</span> 鍵，讓你徹底告別切換輸入法的痛苦！
+              恭喜你拿到日式（JIS）鍵盤！它和美式鍵盤最大的不同，就是
+              空白鍵兩側的 <span className="text-emerald-400 font-bold bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-800">英数</span> 與 <span className="text-teal-400 font-bold bg-teal-950/80 px-1.5 py-0.5 rounded border border-teal-800">かな</span> 鍵：按哪個就切到哪種語言，不必再用 Control＋Space 猜目前的輸入法。
             </p>
           </div>
 
@@ -149,7 +147,7 @@ export const MacKeyboardGuide: React.FC<MacKeyboardGuideProps> = ({ onGoToTraine
             }`}
           >
             <Zap className="w-4 h-4" />
-            <span>3. Mac 專屬極速快捷鍵</span>
+            <span>3. 日文輸入法快捷鍵</span>
           </button>
         </div>
       </div>
@@ -180,8 +178,29 @@ export const MacKeyboardGuide: React.FC<MacKeyboardGuideProps> = ({ onGoToTraine
               {MAC_KEYBOARD_LAYOUT_ROWS.map((row, rIdx) => (
                 <div key={rIdx} className="flex space-x-1.5 justify-center">
                   {row.map((keyItem: any, kIdx: number) => {
-                    const isPressed = activeCode === keyItem.code;
+                    // The physical Return key reports a single 'Enter' code for both halves of the inverted L
+                    const isPressed = activeCode === keyItem.code || (keyItem.isEnter && activeCode === 'Enter');
                     const isHighlighted = isHighlightedKey(keyItem);
+
+                    // Mac style half-height ▲ / ▼ keys stacked between ◀ and ▶
+                    if (keyItem.isArrowStack) {
+                      return (
+                        <div key={kIdx} className={`flex flex-col space-y-0.5 h-11 ${keyItem.width || 'w-8'}`}>
+                          {[['ArrowUp', '▲'], ['ArrowDown', '▼']].map(([code, label]) => (
+                            <div
+                              key={code}
+                              className={`flex-1 rounded-md border flex items-center justify-center text-[9px] font-mono transition-all duration-100 ${
+                                activeCode === code
+                                  ? 'bg-emerald-400 text-slate-950 border-emerald-300'
+                                  : 'bg-slate-900/90 border-slate-800 text-slate-300'
+                              }`}
+                            >
+                              {label}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    }
 
                     // Special styling for inverted L return key
                     if (keyItem.isEnter) {
@@ -361,7 +380,7 @@ export const MacKeyboardGuide: React.FC<MacKeyboardGuideProps> = ({ onGoToTraine
         <div className="space-y-6">
           <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
             <div className="max-w-2xl space-y-2">
-              <h3 className="text-xl font-extrabold text-white">4 個步驟在 Mac 啟用日本語輸入法</h3>
+              <h3 className="text-xl font-extrabold text-white">{MACOS_SETUP_STEPS.length} 個步驟在 Mac 啟用日本語輸入法</h3>
               <p className="text-sm text-slate-400">
                 macOS 內建最高品質的日本語輸入引擎，不需要安裝任何第三方軟體。照著以下步驟只要 1 分鐘即可設定完畢！
               </p>
@@ -377,7 +396,7 @@ export const MacKeyboardGuide: React.FC<MacKeyboardGuideProps> = ({ onGoToTraine
                     <span className="w-8 h-8 rounded-xl bg-emerald-500/20 text-emerald-400 font-black text-sm flex items-center justify-center border border-emerald-500/30">
                       0{stepItem.step}
                     </span>
-                    <span className="text-xs text-slate-500 font-mono">macOS Ventura / Sonoma / Sequoia</span>
+                    <span className="text-xs text-slate-500 font-mono">macOS 13 Ventura 以上</span>
                   </div>
 
                   <h4 className="text-lg font-bold text-white group-hover:text-emerald-300 transition-colors">
@@ -419,55 +438,30 @@ export const MacKeyboardGuide: React.FC<MacKeyboardGuideProps> = ({ onGoToTraine
       {activeTab === 'shortcuts' && (
         <div className="bg-slate-900/60 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
           <div className="max-w-2xl space-y-2">
-            <h3 className="text-xl font-extrabold text-white">Mac 日本語輸入法專屬快捷鍵（職人級技巧）</h3>
+            <h3 className="text-xl font-extrabold text-white">Mac 日本語輸入法常用快捷鍵</h3>
             <p className="text-sm text-slate-400">
-              日本程式設計師與作家就是靠這幾套快捷鍵實現每分鐘 150 字極速盲打！
+              這些快捷鍵要在文字「還有底線、尚未按 Return 確定」時使用，可以把整段直接轉換成需要的文字種類。
             </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-slate-950/80 border border-slate-800 p-5 rounded-2xl space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="text-emerald-400 font-mono font-bold text-sm">Control + Shift + J</div>
-                <span className="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded">平假名</span>
+            {MAC_IME_SHORTCUTS.map((shortcut) => (
+              <div key={shortcut.keys} className="bg-slate-950/80 border border-slate-800 p-5 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-emerald-400 font-mono font-bold text-sm">{shortcut.keys}</div>
+                  <span className="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded whitespace-nowrap">{shortcut.badge}</span>
+                </div>
+                <div className="text-sm font-bold text-white">{shortcut.title}</div>
+                <p className="text-xs text-slate-400">{shortcut.desc}</p>
               </div>
-              <div className="text-sm font-bold text-white">轉換為平假名（ひらがな）</div>
-              <p className="text-xs text-slate-400">
-                如果打字時不小心按成了英文或漢字，直接按這組快捷鍵立刻變回純平假名！
-              </p>
-            </div>
+            ))}
+          </div>
 
-            <div className="bg-slate-950/80 border border-slate-800 p-5 rounded-2xl space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="text-emerald-400 font-mono font-bold text-sm">Control + Shift + K</div>
-                <span className="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded">片假名</span>
-              </div>
-              <div className="text-sm font-bold text-white">轉換為全形片假名（カタカナ）</div>
-              <p className="text-xs text-slate-400">
-                輸入外來語或英文單字（如 ko-hi-）後按一下，瞬間變成片假名「コーヒー」！
-              </p>
-            </div>
-
-            <div className="bg-slate-950/80 border border-slate-800 p-5 rounded-2xl space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="text-emerald-400 font-mono font-bold text-sm">Control + Shift + ;</div>
-                <span className="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded">半形片假</span>
-              </div>
-              <div className="text-sm font-bold text-white">轉換為半形片假名（ﾊﾝｶｸｶﾅ）</div>
-              <p className="text-xs text-slate-400">
-                日本填寫銀行帳戶、姓名假名讀音時經常規定的「半角カナ」。
-              </p>
-            </div>
-
-            <div className="bg-slate-950/80 border border-slate-800 p-5 rounded-2xl space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="text-emerald-400 font-mono font-bold text-sm">Space (空白鍵)</div>
-                <span className="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded">選漢字</span>
-              </div>
-              <div className="text-sm font-bold text-white">智慧漢字變換 / 滾動候選字庫</div>
-              <p className="text-xs text-slate-400">
-                第一下自動配對詞組，連續按可展開巨大選字窗，上下鍵或數字鍵直選。
-              </p>
+          <div className="bg-slate-950/60 border border-slate-800 rounded-2xl p-4 text-xs text-slate-400 flex items-start space-x-2">
+            <HelpCircle className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p>MacBook 的 F6～F10 預設是亮度、音量等功能鍵，要同時按住 fn（🌐）才會變成 F 鍵。</p>
+              <p>Control＋Shift＋J／K 是切換「輸入模式」（之後打的字都會是平假名／片假名），和上面「轉換已輸入文字」的 Control＋J／K 不同。</p>
             </div>
           </div>
         </div>
