@@ -1,5 +1,27 @@
 // Speech Service (Web Speech Synthesis TTS & Speech Recognition STT)
 
+import { localRecognizer, decodeRecording, containsSpeech } from './localSpeechRecognizer';
+
+type ListenCallbacks = {
+  onResult: (transcript: string, isFinal: boolean) => void;
+  onError?: (message: string) => void;
+  onEnd?: () => void;
+};
+
+// A push-to-talk recording handled by the in-page Whisper model
+interface LocalSession {
+  stopRequested: boolean;
+  stream?: MediaStream;
+  recorder?: MediaRecorder;
+  maxTimer?: number;
+  startedAt?: number;
+}
+
+// Longest clip recorded for local recognition; a turn is only a sentence or two
+const MAX_LOCAL_RECORDING_MS = 15000;
+
+const UNSUPPORTED_MESSAGE = '此瀏覽器不支援語音辨識，請改用 Google Chrome 開啟本頁（仍可點選下方選項作答）。';
+
 // Convert ruby markup (<ruby>漢字<rt>かんじ</rt></ruby>) into its kana reading
 export const furiganaToKana = (furigana: string): string =>
   furigana
@@ -50,7 +72,7 @@ const describeRecognitionError = (code: string): string | null => {
     case 'audio-capture':
       return '找不到可用的麥克風裝置，請確認麥克風已連接。';
     case 'network':
-      return '語音辨識需要網路連線（瀏覽器會把語音送到雲端辨識），請檢查網路後再試。';
+      return '連不到語音辨識服務，請檢查網路、VPN 或防火牆是否擋住 Google 後再試。';
     case 'language-not-supported':
       return '此瀏覽器不支援日語語音辨識，建議改用 Google Chrome。';
     default:
@@ -61,6 +83,9 @@ const describeRecognitionError = (code: string): string | null => {
 class SpeechService {
   private synth: SpeechSynthesis | null = null;
   private recognition: any = null;
+  private localSession: LocalSession | null = null;
+  // Set once the browser's own recognizer fails with 'network' (Opera, Arc, blocked networks…)
+  private preferLocal = false;
   private voices: SpeechSynthesisVoice[] = [];
   private defaultRate = 0.85;
 
@@ -144,26 +169,35 @@ class SpeechService {
     }
   }
 
+  // True when speech is recognized by the in-page Whisper model instead of the browser.
+  // Brave ships the Web Speech API without a backend (every attempt fails with 'network'),
+  // and Firefox has no recognizer at all.
+  usesLocalRecognition(): boolean {
+    if (typeof window === 'undefined') return false;
+    const w = window as any;
+    return this.preferLocal || !(w.SpeechRecognition || w.webkitSpeechRecognition) || Boolean(w.navigator.brave);
+  }
+
+  // Start downloading the local model early so the first answer is not delayed
+  prepareRecognition(): void {
+    if (this.usesLocalRecognition() && localRecognizer.isSupported()) {
+      localRecognizer.load().catch(() => {});
+    }
+  }
+
   // Start microphone speech recognition.
   // `continuous: true` keeps listening through pauses until stopListening() is called
   // (used for push-to-talk); otherwise the browser stops after the first phrase.
-  startListening(
-    callbacks: {
-      onResult: (transcript: string, isFinal: boolean) => void;
-      onError?: (message: string) => void;
-      onEnd?: () => void;
-    },
-    options?: { continuous?: boolean }
-  ): boolean {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-
-    if (!SpeechRecognition) {
-      callbacks.onError?.('您的瀏覽器不支援 Web Speech API 語音辨識。建議使用 Google Chrome、Edge 或 Safari。');
-      return false;
-    }
-
+  // The local engine always records until stopListening() (or a 15 s cap).
+  startListening(callbacks: ListenCallbacks, options?: { continuous?: boolean }): boolean {
     // Detach the previous session so its late events cannot leak into this one
     this.abortListening();
+
+    if (this.usesLocalRecognition()) {
+      return this.startLocalListening(callbacks);
+    }
+
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     try {
       const recognition = new SpeechRecognition();
@@ -194,6 +228,13 @@ class SpeechService {
 
       recognition.onerror = (event: any) => {
         if (!isCurrent()) return;
+        if (event.error === 'network' && localRecognizer.isSupported()) {
+          // The browser has no reachable recognition service: use the local model from now on
+          this.preferLocal = true;
+          this.prepareRecognition();
+          callbacks.onError?.('瀏覽器內建的語音辨識連不上雲端服務，已改用離線語音模型，請再試一次（第一次會先下載約 80MB 的模型）。');
+          return;
+        }
         const message = describeRecognitionError(event.error);
         if (message) callbacks.onError?.(message);
       };
@@ -213,9 +254,99 @@ class SpeechService {
     }
   }
 
-  // Gracefully stop: the browser delivers the final transcript, then fires onEnd.
+  // Record with MediaRecorder, then transcribe the clip with Whisper when recording stops
+  private startLocalListening(callbacks: ListenCallbacks): boolean {
+    if (!localRecognizer.isSupported()) {
+      callbacks.onError?.(UNSUPPORTED_MESSAGE);
+      return false;
+    }
+
+    const session: LocalSession = { stopRequested: false };
+    this.localSession = session;
+    const isCurrent = () => this.localSession === session;
+    const finish = () => {
+      if (!isCurrent()) return;
+      this.localSession = null;
+      callbacks.onEnd?.();
+    };
+    const fail = (message: string) => {
+      if (!isCurrent()) return;
+      callbacks.onError?.(message);
+      finish();
+    };
+
+    // Warm the model up while the user is still talking
+    localRecognizer.load().catch(() => {});
+
+    navigator.mediaDevices
+      .getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } })
+      .then(stream => {
+        if (!isCurrent()) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        const chunks: Blob[] = [];
+        const recorder = new MediaRecorder(stream);
+        session.stream = stream;
+        session.recorder = recorder;
+
+        recorder.ondataavailable = (e) => {
+          if (e.data.size > 0) chunks.push(e.data);
+        };
+        recorder.onstop = async () => {
+          stream.getTracks().forEach(track => track.stop());
+          clearTimeout(session.maxTimer);
+          if (!isCurrent()) return;
+          // Released almost immediately: too little audio to even decode, treat as silence
+          const recordedMs = performance.now() - (session.startedAt ?? 0);
+          if (chunks.length === 0 || recordedMs < 300) {
+            finish();
+            return;
+          }
+          try {
+            const samples = await decodeRecording(new Blob(chunks, { type: recorder.mimeType }));
+            if (!isCurrent()) return;
+            if (containsSpeech(samples)) {
+              const text = (await localRecognizer.transcribe(samples)).trim();
+              if (!isCurrent()) return;
+              if (text) callbacks.onResult(text, true);
+            }
+            finish();
+          } catch (err: any) {
+            fail(
+              localRecognizer.getStatus().state === 'error'
+                ? '離線語音模型下載失敗，請檢查網路後再按一次麥克風重試。'
+                : `離線語音辨識失敗：${err?.message ?? err}`
+            );
+          }
+        };
+
+        recorder.start();
+        session.startedAt = performance.now();
+        session.maxTimer = window.setTimeout(() => this.stopListening(), MAX_LOCAL_RECORDING_MS);
+        // The button may have been released while the permission prompt was open
+        if (session.stopRequested) recorder.stop();
+      })
+      .catch((err: any) => {
+        fail(
+          err?.name === 'NotAllowedError' || err?.name === 'SecurityError'
+            ? '麥克風權限被拒絕：請點網址列左側的圖示，允許此網站使用麥克風。'
+            : '找不到可用的麥克風裝置，請確認麥克風已連接。'
+        );
+      });
+
+    return true;
+  }
+
+  // Gracefully stop: the final transcript is delivered, then onEnd fires.
   // Safe to call before the session has actually started.
   stopListening(): void {
+    const session = this.localSession;
+    if (session) {
+      session.stopRequested = true;
+      if (session.recorder?.state === 'recording') session.recorder.stop();
+      return;
+    }
     if (this.recognition) {
       try {
         this.recognition.stop();
@@ -225,6 +356,14 @@ class SpeechService {
 
   // Hard cancel without firing any more callbacks (e.g. when leaving the screen)
   abortListening(): void {
+    const session = this.localSession;
+    if (session) {
+      this.localSession = null; // late recorder / model events are ignored from here on
+      clearTimeout(session.maxTimer);
+      if (session.recorder?.state === 'recording') session.recorder.stop();
+      else session.stream?.getTracks().forEach(track => track.stop());
+    }
+
     const recognition = this.recognition;
     if (!recognition) return;
     this.recognition = null;
@@ -278,3 +417,7 @@ class SpeechService {
 }
 
 export const speechService = new SpeechService();
+
+// Message to show when no speech recognition can work in this browser, or null if usable
+export const getRecognitionBlocker = (): string | null =>
+  speechService.usesLocalRecognition() && !localRecognizer.isSupported() ? UNSUPPORTED_MESSAGE : null;

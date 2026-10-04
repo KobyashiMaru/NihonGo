@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { CONVERSATION_SCENARIOS } from '../../data/conversationScenarios';
 import { CallScenario, DialogueNode, ChatMessage, UserProgress } from '../../types';
 import { soundEffects } from '../../services/soundEffects';
-import { speechService, furiganaToKana } from '../../services/speechService';
+import { speechService, furiganaToKana, getRecognitionBlocker } from '../../services/speechService';
+import { useLocalModelStatus, describeModelStatus } from '../../services/localSpeechRecognizer';
 import confetti from 'canvas-confetti';
 import { 
   Phone, 
@@ -36,6 +37,8 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP, sett
   // Call controls
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  // Released the button; waiting for the recognizer's final result
+  const [isProcessing, setIsProcessing] = useState(false);
   const [recognizedText, setRecognizedText] = useState('');
   const [micMessage, setMicMessage] = useState<string | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
@@ -124,6 +127,8 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP, sett
 
   const acceptCall = () => {
     soundEffects.playPickup();
+    // Brave & co. use the in-page model: start loading it before the first answer
+    speechService.prepareRecognition();
     setCallState('in-call');
     
     // Start initial node
@@ -152,6 +157,7 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP, sett
     speechService.abortListening();
     pttStateRef.current = 'idle';
     setIsListening(false);
+    setIsProcessing(false);
     setIsSpeaking(false);
     stopCamera();
 
@@ -314,6 +320,7 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP, sett
         onEnd: () => {
           pttStateRef.current = 'idle';
           setIsListening(false);
+          setIsProcessing(false);
           if (!failed) evaluateSpokenReply(node, transcriptRef.current);
         }
       },
@@ -327,6 +334,7 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP, sett
   const stopTalking = () => {
     if (pttStateRef.current !== 'holding') return;
     pttStateRef.current = 'finishing';
+    setIsProcessing(true);
     // The final transcript arrives asynchronously, then onEnd evaluates it
     speechService.stopListening();
   };
@@ -372,6 +380,11 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP, sett
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
+
+  const recognitionBlocker = getRecognitionBlocker();
+  const modelStatus = useLocalModelStatus();
+  const usesLocalRecognition = speechService.usesLocalRecognition();
+  const modelNotice = usesLocalRecognition ? describeModelStatus(modelStatus) : null;
 
   const averageSpokenScore = spokenScores.length
     ? Math.round(spokenScores.reduce((sum, s) => sum + s, 0) / spokenScores.length)
@@ -708,15 +721,23 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP, sett
               {isListening || recognizedText ? (
                 <div className="text-sm text-white">
                   <span className="text-xs text-slate-400 mr-1">你說：</span>
-                  {recognizedText || <span className="text-slate-500">（正在聆聽…）</span>}
+                  {recognizedText || (
+                    <span className="text-slate-500">{isProcessing ? '（辨識中…）' : '（正在聆聽…）'}</span>
+                  )}
                 </div>
               ) : (
                 !micMessage && (
-                  <div className="text-xs text-slate-500">
-                    按住「按住說話」按鈕（或空白鍵）開口說日語，說完再放開。
-                  </div>
+                  recognitionBlocker ? (
+                    <div className="text-xs text-amber-300">{recognitionBlocker}</div>
+                  ) : (
+                    <div className="text-xs text-slate-500">
+                      按住「按住說話」按鈕（或空白鍵）開口說日語，說完再放開。
+                      {usesLocalRecognition && '（離線辨識：放開後需要幾秒鐘辨識）'}
+                    </div>
+                  )
                 )
               )}
+              {modelNotice && <div className="text-xs text-sky-300">{modelNotice}</div>}
               {micMessage && <div className="text-xs text-amber-300">{micMessage}</div>}
             </div>
 
@@ -755,7 +776,7 @@ export const VideoCallScreen: React.FC<VideoCallScreenProps> = ({ onEarnXP, sett
                 }`}
               >
                 <Mic className={`w-5 h-5 ${isListening ? 'animate-bounce' : ''}`} />
-                <span>{isListening ? '聆聽中…放開送出' : '按住說話'}</span>
+                <span>{isProcessing ? '辨識中…' : isListening ? '聆聽中…放開送出' : '按住說話'}</span>
               </button>
 
               {/* Hangup */}

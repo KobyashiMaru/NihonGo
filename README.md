@@ -28,7 +28,8 @@ npm run dev
 👉 **http://localhost:5173/**
 
 > [!TIP]
-> 推薦使用 **Google Chrome**、**Microsoft Edge** 或 **macOS Safari** 開啟，可直接享受原生 Web Speech API 語音朗讀（TTS）與麥克風即時語音辨識（STT）！
+> 推薦使用 **Google Chrome**、**Microsoft Edge** 或 **macOS Safari** 開啟，可直接使用瀏覽器內建的語音朗讀（TTS）與即時語音辨識（STT）。
+> **Brave、Firefox** 等沒有內建語音辨識的瀏覽器，會自動改用在瀏覽器內執行的 Whisper 離線語音模型（第一次使用時下載約 80MB，之後存在瀏覽器快取）。
 
 ### 4. 構建生產版本 (Production Build)
 ```bash
@@ -119,6 +120,7 @@ npm run preview
 | **樣式設計** | Tailwind CSS v4 | 現代化深色質感 UI、響應式佈局 |
 | **圖標庫** | Lucide React | 清爽統一的介面圖標 |
 | **語音引擎 (TTS/STT)** | Web Speech API | 免 API Key、瀏覽器原生高音質日語發音與辨識 |
+| **離線語音辨識** | Transformers.js + Whisper (base) | Brave／Firefox 等瀏覽器的備援：在 Web Worker 中本機執行，免 API Key |
 | **音效系統** | Web Audio API | 純程式碼合成來電鈴聲、打字反饋、答對音效與勝利號角 |
 | **動畫特效** | Canvas Confetti / CSS | 過關彩帶紙花與動態 2D 角色嘴型語音波動 |
 | **狀態持久化** | LocalStorage | 自動記錄經驗值 (XP)、連續登入天數與通關狀態 |
@@ -147,6 +149,8 @@ Japanese Learning/
 │   │   └── jlptCurriculum.ts    # JLPT N5 至 N2 闖關階梯資料
 │   ├── services/
 │   │   ├── speechService.ts     # Web Speech API 封裝（日文發音與辨識評分）
+│   │   ├── localSpeechRecognizer.ts # Whisper 離線辨識（錄音、轉 16kHz、模型下載狀態）
+│   │   ├── whisper.worker.ts    # 在 Web Worker 中執行 Whisper 模型
 │   │   ├── soundEffects.ts      # Web Audio API 鈴聲與音效合成引擎
 │   │   └── storageService.ts    # 本機進度存檔與 XP 計算
 │   └── components/

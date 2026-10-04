@@ -5,7 +5,8 @@ import {
   READING_ARTICLES, 
   WRITING_EXERCISES
 } from '../../data/fourSkillsData';
-import { speechService, furiganaToKana } from '../../services/speechService';
+import { speechService, furiganaToKana, getRecognitionBlocker } from '../../services/speechService';
+import { useLocalModelStatus, describeModelStatus } from '../../services/localSpeechRecognizer';
 import { soundEffects } from '../../services/soundEffects';
 import confetti from 'canvas-confetti';
 import { 
@@ -45,6 +46,8 @@ export const FourSkillsHub: React.FC<FourSkillsHubProps> = ({ onEarnXP }) => {
   // SPEAKING STATE
   const [speakIdx, setSpeakIdx] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
+  // Recording stopped; waiting for the recognizer's result (noticeable with the offline model)
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [spokenTranscript, setSpokenTranscript] = useState('');
   const [pronounceScore, setPronounceScore] = useState<number | null>(null);
   const [scoreFeedback, setScoreFeedback] = useState<string>('');
@@ -88,18 +91,26 @@ export const FourSkillsHub: React.FC<FourSkillsHubProps> = ({ onEarnXP }) => {
   // --- SPEAKING HANDLERS ---
   const currentSpeak = SPEAKING_EXERCISES[speakIdx];
 
+  const modelStatus = useLocalModelStatus();
+  const usesLocalRecognition = speechService.usesLocalRecognition();
+  const modelNotice = usesLocalRecognition ? describeModelStatus(modelStatus) : null;
+
   const toggleRecording = () => {
     if (isRecording) {
       speechService.stopListening();
       setIsRecording(false);
+      setIsTranscribing(true);
     } else {
       setSpokenTranscript('');
       setPronounceScore(null);
       setScoreFeedback('');
+      let gotResult = false;
+      let failed = false;
       const ok = speechService.startListening({
         onResult: (text, isFinal) => {
           setSpokenTranscript(text);
           if (isFinal) {
+            gotResult = true;
             setIsRecording(false);
             const res = speechService.scorePronunciation(
               currentSpeak.targetJapanese,
@@ -117,10 +128,15 @@ export const FourSkillsHub: React.FC<FourSkillsHubProps> = ({ onEarnXP }) => {
           }
         },
         onError: (message) => {
+          failed = true;
           setIsRecording(false);
           setScoreFeedback(message);
         },
-        onEnd: () => setIsRecording(false)
+        onEnd: () => {
+          setIsRecording(false);
+          setIsTranscribing(false);
+          if (!gotResult && !failed) setScoreFeedback('沒有偵測到聲音，請靠近麥克風再試一次。');
+        }
       });
       setIsRecording(ok);
     }
@@ -207,7 +223,10 @@ export const FourSkillsHub: React.FC<FourSkillsHubProps> = ({ onEarnXP }) => {
             <span>聽 (Listening)</span>
           </button>
           <button
-            onClick={() => setActiveTab('speaking')}
+            onClick={() => {
+              setActiveTab('speaking');
+              speechService.prepareRecognition();
+            }}
             className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all flex items-center space-x-1.5 whitespace-nowrap ${
               activeTab === 'speaking'
                 ? 'bg-purple-500 text-slate-950 shadow-md shadow-purple-500/20'
@@ -340,7 +359,8 @@ export const FourSkillsHub: React.FC<FourSkillsHubProps> = ({ onEarnXP }) => {
           <div className="text-center space-y-4">
             <button
               onClick={toggleRecording}
-              className={`w-24 h-24 rounded-full mx-auto flex items-center justify-center shadow-2xl transition-all transform active:scale-95 ${
+              disabled={isTranscribing}
+              className={`disabled:opacity-60 w-24 h-24 rounded-full mx-auto flex items-center justify-center shadow-2xl transition-all transform active:scale-95 ${
                 isRecording
                   ? 'bg-rose-500 text-white animate-pulse shadow-rose-500/50'
                   : 'bg-gradient-to-tr from-purple-500 to-indigo-500 text-slate-950 shadow-purple-500/40 hover:scale-105'
@@ -349,8 +369,19 @@ export const FourSkillsHub: React.FC<FourSkillsHubProps> = ({ onEarnXP }) => {
               <Mic className="w-10 h-10" />
             </button>
             <div className="text-xs text-slate-400">
-              {isRecording ? '正在聆聽您的發音，請大聲說出上方日語...' : '點擊麥克風開始跟讀練習'}
+              {isTranscribing
+                ? '辨識中…'
+                : isRecording
+                ? usesLocalRecognition
+                  ? '正在錄音，說完後再點一次麥克風結束'
+                  : '正在聆聽您的發音，請大聲說出上方日語...'
+                : '點擊麥克風開始跟讀練習'}
             </div>
+            {modelNotice && <div className="text-xs text-sky-300 max-w-md mx-auto">{modelNotice}</div>}
+            {/* Mic errors: the results box below only appears once something was recognized */}
+            {!spokenTranscript && pronounceScore === null && (scoreFeedback || getRecognitionBlocker()) && (
+              <div className="text-xs text-amber-300 max-w-md mx-auto">{scoreFeedback || getRecognitionBlocker()}</div>
+            )}
           </div>
 
           {/* Results Display */}
