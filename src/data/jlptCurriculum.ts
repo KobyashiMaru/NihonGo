@@ -17,7 +17,7 @@ export interface JLPTStage {
   modules: {
     id: string;
     title: string;
-    type: 'keyboard' | 'conversation' | 'grammar' | 'skills' | 'exam';
+    type: 'kana' | 'keyboard' | 'conversation' | 'grammar' | 'skills' | 'exam';
     desc: string;
     xpReward: number;
   }[];
@@ -33,12 +33,13 @@ export const JLPT_STAGES: JLPTStage[] = [
     description: '掌握平假名、片假名、濁音與拗音，學會使用 Mac JIS 鍵盤的「英数」與「かな」鍵光速盲打。',
     unlocked: true,
     requiredXp: 0,
-    totalLessons: 4,
+    totalLessons: 5,
     completedLessons: 0,
     vocabularyCount: 80,
     recommendedFor: '完全不會日文、剛拿到日式鍵盤的初學者',
     grammarFocus: ['羅馬字拼音對照', 'Mac 英数/かな切換', '清音・濁音・半濁音', '促音與長音輸入'],
     modules: [
+      { id: 'm0-0', title: '五十音單字卡背誦', type: 'kana', desc: '平假名・片假名翻卡記憶，搭配間隔複習排程', xpReward: 50 },
       { id: 'm0-1', title: '圖解 Mac 日式巧控鍵盤新手課', type: 'keyboard', desc: '認識英数、かな、大倒L Return、@ 與 ¥ 鍵位', xpReward: 50 },
       { id: 'm0-2', title: '五十音平假名打字入門', type: 'keyboard', desc: 'あいうえお基礎打字練習與發音', xpReward: 50 },
       { id: 'm0-3', title: '片假名與外來語辨識', type: 'skills', desc: 'コーヒー、パソコン等片假名生活詞彙', xpReward: 50 },

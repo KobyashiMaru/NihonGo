@@ -62,6 +62,23 @@ npm run preview
                      • 隨時可擴充新難度與新情境題庫
 ```
 
+### 0. 🃏 五十音單字卡（零基礎第一步）
+還不認識假名？從這裡開始，一次背一行：
+- **平假名 / 片假名切換**：清音 46 字＋濁音・半濁音 25 字，共 71 張 × 2 種假名。
+- **四種練習方式**：翻卡記憶（看字回想、翻面自評）、看字選音（4 選 1 羅馬拼音）、聽音辨字（聽發音選假名）、看字打拼音（直接對應日文輸入法的羅馬字輸入）。
+- **間隔重複（Leitner 記憶盒）**：答錯的字幾張後立刻再出現；答對的字依熟練度隔 10 分鐘、1 天、3 天、7 天、16 天再複習，到期卡片會在首頁提醒。
+- **記憶輔助**：字源漢字（あ←安、ア←阿）、濁音由來（か＋゛→が）、片假名用外來語例字、易混淆字對照（シ/ツ、ソ/ン、ぬ/め、ね/れ/わ…）與發音／打字小提醒。
+- **熟練度總表**：五十音表依「未學／學習中／熟悉中／已掌握」上色，點任一字可聽發音。
+- **字源提示**：答題前可按「💡 給我提示」（或 H 鍵）看漢字字源與記憶口訣（取自《日文五十音漢字字源與記憶對照表》）；看了提示才答對的字會再考一次。
+- **全鍵盤操作**：Space 翻面、H 提示、1/2 自評、1–4 作答、Return 下一張。
+
+### 0.5 📚 學習資料庫
+收集對學日文有幫助的文件，集中在一個分頁裡閱讀：
+- **內建教材**：放在 `src/data/docs/` 的 Markdown 檔（例如《日文五十音漢字字源與記憶對照表》），新增檔案就會自動出現。
+- **上傳自己的資料**：拖曳或選擇 Word (.docx)、PDF、Markdown、文字檔或圖片；Word 會自動轉成網頁格式閱讀。檔案只存在這個瀏覽器（IndexedDB），清除網站資料時會一併刪除。
+- **分類與搜尋**：五十音・發音、單字、文法、會話、閱讀・聽力、JLPT 考試、其他；可重新命名、改分類、下載原檔或刪除。
+- **朗讀選取文字**：在文件中選取一段日文，按一下就能聽發音。
+
 ### 1. 🌟 MacBook / Apple 日式巧控鍵盤（Magic Keyboard JIS）圖解新手教學
 專為剛拿到日式鍵盤的使用者打造：
 - **實體鍵盤即時感應器**：敲擊實體鍵盤，螢幕上的對應按鍵即刻高亮發光，並顯示該按鍵的日文功能。
@@ -123,7 +140,8 @@ npm run preview
 | **離線語音辨識** | Transformers.js + Whisper (base) | Brave／Firefox 等瀏覽器的備援：在 Web Worker 中本機執行，免 API Key |
 | **音效系統** | Web Audio API | 純程式碼合成來電鈴聲、打字反饋、答對音效與勝利號角 |
 | **動畫特效** | Canvas Confetti / CSS | 過關彩帶紙花與動態 2D 角色嘴型語音波動 |
-| **狀態持久化** | LocalStorage | 自動記錄經驗值 (XP)、連續登入天數與通關狀態 |
+| **狀態持久化** | LocalStorage / IndexedDB | 經驗值 (XP)、連續登入天數、通關狀態與五十音記憶排程（LocalStorage）；上傳的學習資料（IndexedDB） |
+| **文件轉換** | mammoth / marked / DOMPurify | Word 轉 HTML（上傳時才載入）、Markdown 轉 HTML，並過濾不安全的內容 |
 
 ---
 
@@ -144,6 +162,9 @@ Japanese Learning/
 │   ├── data/
 │   │   ├── macKeyboardGuideData.ts # Mac 巧控鍵盤佈局、特徵說明與 macOS 設定步驟
 │   │   ├── kanaData.ts          # 五十音、濁音、拗音與打字關卡資料
+│   │   ├── kanaFlashcardData.ts # 單字卡用：五十音表排列、字源、片假名例字、易混淆字
+│   │   ├── learningDocs.ts      # 學習資料庫：分類、文件型別、自動載入內建文件
+│   │   ├── docs/                # 內建教材（Markdown，含 title / description / category 前置資料）
 │   │   ├── conversationScenarios.ts # Duolingo 視訊通話分支劇本與提示詞庫
 │   │   ├── fourSkillsData.ts    # 聽力、影子跟讀、閱讀與造句題庫
 │   │   └── jlptCurriculum.ts    # JLPT N5 至 N2 闖關階梯資料
@@ -152,9 +173,14 @@ Japanese Learning/
 │   │   ├── localSpeechRecognizer.ts # Whisper 離線辨識（錄音、轉 16kHz、模型下載狀態）
 │   │   ├── whisper.worker.ts    # 在 Web Worker 中執行 Whisper 模型
 │   │   ├── soundEffects.ts      # Web Audio API 鈴聲與音效合成引擎
+│   │   ├── kanaSrsService.ts    # 五十音單字卡間隔重複排程（Leitner 記憶盒）與偏好存檔
+│   │   ├── docLibraryService.ts # 學習資料庫：上傳檔案轉換（Word→HTML）與 IndexedDB 存取
+│   │   ├── documentRenderer.ts  # Markdown 轉 HTML 並以 DOMPurify 過濾
 │   │   └── storageService.ts    # 本機進度存檔與 XP 計算
 │   └── components/
 │       ├── layout/              # 頂部導覽列 (Navbar) 與側邊欄 (Sidebar)
+│       ├── kana/                # 五十音單字卡（選行與熟練度表、四種練習模式、記憶輔助卡）
+│       ├── library/             # 學習資料庫（文件列表、上傳、閱讀器）
 │       ├── keyboard/            # Mac 鍵盤圖解指南與 JIS 打字道場
 │       ├── videocall/           # Duolingo 視訊通話畫面（動態角色與字幕）
 │       ├── skills/              # 聽說讀寫四維訓練室

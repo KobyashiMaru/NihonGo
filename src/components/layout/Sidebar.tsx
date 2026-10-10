@@ -6,10 +6,12 @@ import {
   Map, 
   BookOpen, 
   HelpCircle,
-  Sparkles
+  Sparkles,
+  Layers,
+  Library
 } from 'lucide-react';
 
-export type NavTab = 'mac-keyboard' | 'keyboard-trainer' | 'video-call' | 'four-skills' | 'roadmap';
+export type NavTab = 'kana-flashcards' | 'mac-keyboard' | 'keyboard-trainer' | 'video-call' | 'four-skills' | 'roadmap' | 'library';
 
 interface SidebarProps {
   currentTab: NavTab;
@@ -18,6 +20,15 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => {
   const navItems = [
+    {
+      id: 'kana-flashcards' as NavTab,
+      label: '五十音單字卡',
+      sublabel: '翻卡背誦與間隔複習',
+      icon: Layers,
+      badge: '零基礎',
+      badgeColor: 'bg-pink-500/20 text-pink-300 border-pink-500/30',
+      activeColor: 'from-pink-600/30 to-rose-600/10 border-pink-500/50 text-pink-400',
+    },
     {
       id: 'mac-keyboard' as NavTab,
       label: 'Mac 日式鍵盤圖解',
@@ -56,6 +67,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
       sublabel: 'N5 → N3 / N2 藍圖',
       icon: Map,
       activeColor: 'from-amber-600/30 to-orange-600/10 border-amber-500/50 text-amber-400',
+    },
+    {
+      id: 'library' as NavTab,
+      label: '學習資料庫',
+      sublabel: '講義・筆記・對照表',
+      icon: Library,
+      activeColor: 'from-cyan-600/30 to-teal-600/10 border-cyan-500/50 text-cyan-400',
     },
   ];
 
@@ -112,7 +130,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
           <span>新手起步指南</span>
         </div>
         <p className="text-[11px] text-slate-400 leading-relaxed">
-          先到「Mac 日式鍵盤圖解」認識快捷鍵，接著前往「AI 視訊通話」開口說第一句日語！
+          還不認識假名？先到「五十音單字卡」每天背一行，再到「Mac 日式鍵盤圖解」學打字，最後前往「AI 視訊通話」開口說日語！
         </p>
       </div>
     </aside>

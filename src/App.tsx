@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense } from 'react';
 import { Navbar } from './components/layout/Navbar';
 import { Sidebar, NavTab } from './components/layout/Sidebar';
 import { MacKeyboardGuide } from './components/keyboard/MacKeyboardGuide';
 import { JISKeyboardTrainer } from './components/keyboard/JISKeyboardTrainer';
+import { KanaFlashcards } from './components/kana/KanaFlashcards';
 import { VideoCallScreen } from './components/videocall/VideoCallScreen';
 import { FourSkillsHub } from './components/skills/FourSkillsHub';
 import { RoadmapScreen } from './components/roadmap/RoadmapScreen';
@@ -12,8 +13,15 @@ import { soundEffects } from './services/soundEffects';
 import { speechService } from './services/speechService';
 import { UserProgress } from './types';
 
+// Loaded on first visit: keeps the Markdown renderer and sanitizer out of the main bundle
+const LearningLibrary = lazy(() =>
+  import('./components/library/LearningLibrary').then(m => ({ default: m.LearningLibrary }))
+);
+
 export function App() {
   const [currentTab, setCurrentTab] = useState<NavTab>('mac-keyboard');
+  // Document another module asked the library to open (e.g. the kana origin table)
+  const [libraryDocId, setLibraryDocId] = useState<string | null>(null);
   const [progress, setProgress] = useState<UserProgress>(loadUserProgress);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -41,6 +49,16 @@ export function App() {
     setProgress(prev => addXP(prev, amount));
   };
 
+  const openTab = (tab: NavTab) => {
+    setLibraryDocId(null);
+    setCurrentTab(tab);
+  };
+
+  const openDocument = (docId: string) => {
+    setLibraryDocId(docId);
+    setCurrentTab('library');
+  };
+
   const handleToggleSound = () => {
     setSoundEnabled(prev => !prev);
   };
@@ -61,11 +79,15 @@ export function App() {
         {/* Sidebar Navigation */}
         <Sidebar
           currentTab={currentTab}
-          onSelectTab={(tab) => setCurrentTab(tab)}
+          onSelectTab={openTab}
         />
 
         {/* Viewport for Current Module */}
         <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto">
+          {currentTab === 'kana-flashcards' && (
+            <KanaFlashcards onEarnXP={handleEarnXP} onOpenDocument={openDocument} />
+          )}
+
           {currentTab === 'mac-keyboard' && (
             <MacKeyboardGuide onGoToTrainer={() => setCurrentTab('keyboard-trainer')} />
           )}
@@ -82,11 +104,18 @@ export function App() {
             <FourSkillsHub onEarnXP={handleEarnXP} />
           )}
 
+          {currentTab === 'library' && (
+            <Suspense fallback={<div className="text-center text-sm text-slate-500 py-20">正在開啟學習資料庫…</div>}>
+              <LearningLibrary key={libraryDocId ?? 'library'} initialDocId={libraryDocId} />
+            </Suspense>
+          )}
+
           {currentTab === 'roadmap' && (
             <RoadmapScreen
               progress={progress}
               onSelectModule={(type) => {
-                if (type === 'keyboard') setCurrentTab('keyboard-trainer');
+                if (type === 'kana') setCurrentTab('kana-flashcards');
+                else if (type === 'keyboard') setCurrentTab('keyboard-trainer');
                 else if (type === 'conversation') setCurrentTab('video-call');
                 else setCurrentTab('four-skills');
               }}
