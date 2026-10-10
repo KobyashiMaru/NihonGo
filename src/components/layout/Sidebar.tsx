@@ -78,7 +78,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentTab, onSelectTab }) => 
   ];
 
   return (
-    <aside className="w-full lg:w-64 bg-slate-900/60 lg:min-h-[calc(100vh-65px)] border-b lg:border-b-0 lg:border-r border-slate-800 p-3 lg:p-4 flex lg:flex-col justify-between overflow-x-auto">
+    // On desktop the sidebar stays in place under the navbar while the page scrolls
+    <aside className="w-full lg:w-64 bg-slate-900/60 lg:sticky lg:top-(--navbar-height) lg:self-start lg:h-[calc(100vh-var(--navbar-height))] lg:overflow-y-auto lg:overflow-x-hidden border-b lg:border-b-0 lg:border-r border-slate-800 p-3 lg:p-4 flex lg:flex-col justify-between overflow-x-auto">
       <div className="flex lg:flex-col space-x-2 lg:space-x-0 lg:space-y-2 w-full">
         <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 px-3 py-1.5 hidden lg:block">
           學習模組

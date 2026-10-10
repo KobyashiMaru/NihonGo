@@ -3,6 +3,8 @@
 @layer base {
   :root {
     --font-sans: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", sans-serif;
+    /* Desktop navbar height; the sidebar sticks right below it */
+    --navbar-height: 4.5rem;
   }
 
   body {
